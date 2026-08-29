@@ -76,14 +76,13 @@ history.Update(entry, static (e, current) => current.Add(e));
 ```
 
 For `Atomic<Int32>`, `Atomic<Int64>`, `Atomic<UInt32>` and `Atomic<UInt64>`, `Increment`, `Decrement`,
-`Add`, `And` and `Or` issue the instruction directly with no loop. You don't opt in, and it doesn't
-matter how the call is spelled: closed overloads on the concrete types win overload resolution, and the
-open generic tests `typeof(T)` and specialises to the same instruction. The JIT folds that test when it
-specialises the method, so `Atomic<Int64>.Increment` is one `ldaddal` with nothing in front of it and
-`Atomic<Decimal>.Increment` is the loop with nothing in front of it either.
+`Add`, `And` and `Or` issue the instruction directly with no loop. You don't opt in: the method tests
+`typeof(T)`, and the JIT folds that test when it specialises the method, so `Atomic<Int64>.Increment` is
+one `ldaddal` with nothing in front of it and `Atomic<Decimal>.Increment` is the loop with nothing in
+front of it either.
 
-Both paths are needed, because overload resolution can only reach the closed method where the type is
-written down. Generic code cannot reach it at all:
+Specialising inside the method rather than declaring overloads on the concrete types is what makes this
+reach generic code. Overload resolution happens where the type is written down, and here it isn't:
 
 ```csharp
 static void Bump<T>(Atomic<T> cell) where T : IIncrementOperators<T> => cell.Increment();

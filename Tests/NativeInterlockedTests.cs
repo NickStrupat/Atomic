@@ -100,10 +100,8 @@ public class NativeInterlockedTests
 	[Fact]
 	public void TheInstructionAndTheLoopAgree()
 	{
-		// Both spellings reach the instruction now. The closed overload here wins overload resolution,
-		// and naming AtomicExtensions reaches the open one, which specialises to the same call once the
-		// JIT knows the type. So the loop they have to agree with is written out below, because the
-		// library no longer offers a way to ask for it.
+		// There is one spelling now, and it reaches the instruction. So the loop it has to agree with is
+		// written out below, because the library no longer offers a way to ask for one.
 		var byInstruction = new Atomic<Int32>(10);
 		var byLoop = new Atomic<Int32>(10);
 
@@ -117,10 +115,11 @@ public class NativeInterlockedTests
 	[Fact]
 	public void WhenTheCallerIsGeneric_TheInstructionIsStillWhatRuns()
 	{
-		// Overload resolution happens where the type is written down, so generic code cannot reach the
-		// closed overloads at all — before AtomicExtensions specialised, this was a compare-and-exchange
-		// loop no matter what T turned out to be. Only the results are checked here; that the code
-		// generated is the bare instruction is a fact about codegen, not something a test can observe.
+		// This is the callsite the specialisation exists for. It used to be a compare-and-exchange loop no
+		// matter what T turned out to be, because the instruction was reachable only through overloads on
+		// the closed types and overload resolution happens where the type is written down. Only the
+		// results are checked here; that the code generated is the bare instruction is a fact about
+		// codegen, not something a test can observe.
 		Generic.Increment(new Atomic<Int32>(10)).Should().Be(11);
 		Generic.Increment(new Atomic<Int64>(10L)).Should().Be(11L);
 		Generic.Increment(new Atomic<UInt32>(10U)).Should().Be(11U);
@@ -161,9 +160,9 @@ public class NativeInterlockedTests
 	[Fact]
 	public void WhenTheCallerIsGeneric_TheRestOfTheWordIsStillLeftAlone()
 	{
-		// The specialisation hands a four byte instruction a reference into an eight byte field, the same
-		// as the closed overload does. An overflow carrying into the bytes the cell keeps zeroed would
-		// read back correctly and fail every later comparison.
+		// The specialisation hands a four byte instruction a reference into an eight byte field. An
+		// overflow carrying into the bytes the cell keeps zeroed would read back correctly and fail every
+		// later comparison after it.
 		var atomic = new Atomic<Int32>(Int32.MaxValue);
 
 		Generic.Increment(atomic).Should().Be(Int32.MinValue);

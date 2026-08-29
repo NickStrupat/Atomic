@@ -8,11 +8,11 @@ namespace Tests;
 /// <see cref="IAtomic{T}"/> and so are not part of the shared contract suite.
 /// </summary>
 /// <remarks>
-/// Declaring them on the closed type is what lets <see cref="AtomicInterlockedExtensions"/> take over
-/// for the four integers that have an instruction, and it drops an interface dispatch from every
-/// iteration of the loop for everything else. The cost is that the candidates in <c>Candidates</c> no
-/// longer exercise these methods; what they still share — <see cref="IAtomic{T}.TryCompareExchange"/>
-/// driven in a loop by many threads — is covered by <see cref="AtomicContractTests"/> directly.
+/// Declaring them on <see cref="Atomic{T}"/> rather than the interface drops a dispatch from every
+/// iteration of the loop, and lets them reach the storage directly for the four integers that have an
+/// instruction. The cost is that the candidates in <c>Candidates</c> no longer exercise these methods;
+/// what they still share — <see cref="IAtomic{T}.TryCompareExchange"/> driven in a loop by many
+/// threads — is covered by <see cref="AtomicContractTests"/> directly.
 /// </remarks>
 public class AtomicExtensionsTests
 {

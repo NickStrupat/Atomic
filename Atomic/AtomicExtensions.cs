@@ -20,17 +20,19 @@ namespace NickStrupat;
 /// without is the loop and nothing else. Neither carries the test.
 /// </para>
 /// <para>
-/// The instructions themselves are not written here. Under the <c>typeof</c> test the cell is cast to
-/// the closed type and handed to <see cref="AtomicInterlockedExtensions"/>, which is where those five
-/// live for callers who name the type, and the values cross the same way. Every one of those casts
-/// folds away with the test that guards it — the reference casts to nothing at all, and the box and
-/// unbox around the values are removed before they are ever emitted — so the delegation costs nothing,
-/// allocates nothing, and each instruction is written down once rather than twice.
+/// Getting at the instruction means getting a reference of the right type to the storage, and under
+/// the test the cell is that type already — it is only the compiler that has not been told. Casting
+/// the cell through <see cref="Object"/> tells it, and taking <c>Storage</c> from the result is then
+/// an ordinary <c>ref Int32</c>. The values cross the same way. Every one of those casts folds away
+/// with the test that guards it: the reference cast to nothing at all, and the box and unbox around
+/// the values removed before they are ever emitted, so nothing here allocates.
 /// </para>
 /// <para>
-/// Both routes exist because overload resolution can only pick the closed method where the type is
-/// written down. Generic code holding an <see cref="Atomic{T}"/> cannot reach it at all, and paid a
-/// loop for every <c>T</c> before this specialisation existed.
+/// This used to be a second set of extensions declared against the closed types, which won overload
+/// resolution and so got the instruction to anyone who named <c>Atomic&lt;Int64&gt;</c> outright. It
+/// could not help generic code, because overload resolution happens where the type is written down and
+/// there it is still a parameter — so every <c>T</c> paid for a loop. Specialising here covers both,
+/// and the closed set was two hundred lines saying the same thing a second time.
 /// </para>
 /// <para>
 /// The values returned follow <see cref="Interlocked"/>, including where it is inconsistent:
@@ -103,10 +105,14 @@ public static class AtomicExtensions
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
 
-		if (typeof(T) == typeof(Int32)) return (T)(Object)((Atomic<Int32>)(Object)atomic).Add((Int32)(Object)addend);
-		if (typeof(T) == typeof(Int64)) return (T)(Object)((Atomic<Int64>)(Object)atomic).Add((Int64)(Object)addend);
-		if (typeof(T) == typeof(UInt32)) return (T)(Object)((Atomic<UInt32>)(Object)atomic).Add((UInt32)(Object)addend);
-		if (typeof(T) == typeof(UInt64)) return (T)(Object)((Atomic<UInt64>)(Object)atomic).Add((UInt64)(Object)addend);
+		if (typeof(T) == typeof(Int32))
+			return (T)(Object)Interlocked.Add(ref ((Atomic<Int32>)(Object)atomic).Storage, (Int32)(Object)addend);
+		if (typeof(T) == typeof(Int64))
+			return (T)(Object)Interlocked.Add(ref ((Atomic<Int64>)(Object)atomic).Storage, (Int64)(Object)addend);
+		if (typeof(T) == typeof(UInt32))
+			return (T)(Object)Interlocked.Add(ref ((Atomic<UInt32>)(Object)atomic).Storage, (UInt32)(Object)addend);
+		if (typeof(T) == typeof(UInt64))
+			return (T)(Object)Interlocked.Add(ref ((Atomic<UInt64>)(Object)atomic).Storage, (UInt64)(Object)addend);
 
 		var current = atomic.Read();
 		while (true)
@@ -149,10 +155,14 @@ public static class AtomicExtensions
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
 
-		if (typeof(T) == typeof(Int32)) return (T)(Object)((Atomic<Int32>)(Object)atomic).Increment();
-		if (typeof(T) == typeof(Int64)) return (T)(Object)((Atomic<Int64>)(Object)atomic).Increment();
-		if (typeof(T) == typeof(UInt32)) return (T)(Object)((Atomic<UInt32>)(Object)atomic).Increment();
-		if (typeof(T) == typeof(UInt64)) return (T)(Object)((Atomic<UInt64>)(Object)atomic).Increment();
+		if (typeof(T) == typeof(Int32))
+			return (T)(Object)Interlocked.Increment(ref ((Atomic<Int32>)(Object)atomic).Storage);
+		if (typeof(T) == typeof(Int64))
+			return (T)(Object)Interlocked.Increment(ref ((Atomic<Int64>)(Object)atomic).Storage);
+		if (typeof(T) == typeof(UInt32))
+			return (T)(Object)Interlocked.Increment(ref ((Atomic<UInt32>)(Object)atomic).Storage);
+		if (typeof(T) == typeof(UInt64))
+			return (T)(Object)Interlocked.Increment(ref ((Atomic<UInt64>)(Object)atomic).Storage);
 
 		var current = atomic.Read();
 		while (true)
@@ -175,10 +185,14 @@ public static class AtomicExtensions
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
 
-		if (typeof(T) == typeof(Int32)) return (T)(Object)((Atomic<Int32>)(Object)atomic).Decrement();
-		if (typeof(T) == typeof(Int64)) return (T)(Object)((Atomic<Int64>)(Object)atomic).Decrement();
-		if (typeof(T) == typeof(UInt32)) return (T)(Object)((Atomic<UInt32>)(Object)atomic).Decrement();
-		if (typeof(T) == typeof(UInt64)) return (T)(Object)((Atomic<UInt64>)(Object)atomic).Decrement();
+		if (typeof(T) == typeof(Int32))
+			return (T)(Object)Interlocked.Decrement(ref ((Atomic<Int32>)(Object)atomic).Storage);
+		if (typeof(T) == typeof(Int64))
+			return (T)(Object)Interlocked.Decrement(ref ((Atomic<Int64>)(Object)atomic).Storage);
+		if (typeof(T) == typeof(UInt32))
+			return (T)(Object)Interlocked.Decrement(ref ((Atomic<UInt32>)(Object)atomic).Storage);
+		if (typeof(T) == typeof(UInt64))
+			return (T)(Object)Interlocked.Decrement(ref ((Atomic<UInt64>)(Object)atomic).Storage);
 
 		var current = atomic.Read();
 		while (true)
@@ -202,10 +216,14 @@ public static class AtomicExtensions
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
 
-		if (typeof(T) == typeof(Int32)) return (T)(Object)((Atomic<Int32>)(Object)atomic).And((Int32)(Object)value);
-		if (typeof(T) == typeof(Int64)) return (T)(Object)((Atomic<Int64>)(Object)atomic).And((Int64)(Object)value);
-		if (typeof(T) == typeof(UInt32)) return (T)(Object)((Atomic<UInt32>)(Object)atomic).And((UInt32)(Object)value);
-		if (typeof(T) == typeof(UInt64)) return (T)(Object)((Atomic<UInt64>)(Object)atomic).And((UInt64)(Object)value);
+		if (typeof(T) == typeof(Int32))
+			return (T)(Object)Interlocked.And(ref ((Atomic<Int32>)(Object)atomic).Storage, (Int32)(Object)value);
+		if (typeof(T) == typeof(Int64))
+			return (T)(Object)Interlocked.And(ref ((Atomic<Int64>)(Object)atomic).Storage, (Int64)(Object)value);
+		if (typeof(T) == typeof(UInt32))
+			return (T)(Object)Interlocked.And(ref ((Atomic<UInt32>)(Object)atomic).Storage, (UInt32)(Object)value);
+		if (typeof(T) == typeof(UInt64))
+			return (T)(Object)Interlocked.And(ref ((Atomic<UInt64>)(Object)atomic).Storage, (UInt64)(Object)value);
 
 		var current = atomic.Read();
 		while (true)
@@ -227,10 +245,14 @@ public static class AtomicExtensions
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
 
-		if (typeof(T) == typeof(Int32)) return (T)(Object)((Atomic<Int32>)(Object)atomic).Or((Int32)(Object)value);
-		if (typeof(T) == typeof(Int64)) return (T)(Object)((Atomic<Int64>)(Object)atomic).Or((Int64)(Object)value);
-		if (typeof(T) == typeof(UInt32)) return (T)(Object)((Atomic<UInt32>)(Object)atomic).Or((UInt32)(Object)value);
-		if (typeof(T) == typeof(UInt64)) return (T)(Object)((Atomic<UInt64>)(Object)atomic).Or((UInt64)(Object)value);
+		if (typeof(T) == typeof(Int32))
+			return (T)(Object)Interlocked.Or(ref ((Atomic<Int32>)(Object)atomic).Storage, (Int32)(Object)value);
+		if (typeof(T) == typeof(Int64))
+			return (T)(Object)Interlocked.Or(ref ((Atomic<Int64>)(Object)atomic).Storage, (Int64)(Object)value);
+		if (typeof(T) == typeof(UInt32))
+			return (T)(Object)Interlocked.Or(ref ((Atomic<UInt32>)(Object)atomic).Storage, (UInt32)(Object)value);
+		if (typeof(T) == typeof(UInt64))
+			return (T)(Object)Interlocked.Or(ref ((Atomic<UInt64>)(Object)atomic).Storage, (UInt64)(Object)value);
 
 		var current = atomic.Read();
 		while (true)

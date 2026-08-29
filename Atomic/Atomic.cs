@@ -49,8 +49,8 @@ public sealed class Atomic<T>
 	/// <summary>The value, by reference, for the extensions which apply an instruction to it directly.</summary>
 	/// <remarks>
 	/// Handing this to <see cref="Interlocked"/> is only sound for a value the hardware has an
-	/// instruction for, which is why <see cref="AtomicInterlockedExtensions"/> offers it for those types
-	/// alone.
+	/// instruction for, which is why <see cref="AtomicExtensions"/> reaches for it only under a
+	/// <c>typeof</c> test naming one of those types.
 	/// </remarks>
 	internal ref T Storage => ref storage;
 
