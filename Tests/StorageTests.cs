@@ -101,7 +101,8 @@ public class StorageTests
 	{
 		// Atomic<T> used to consult this at run time and fall back to the monitor if it failed. The check
 		// cost every access a static load and a branch under NativeAOT, which cannot fold a probe that
-		// reads the address of an object, so it lives here instead. A runtime that seated the field
+		// reads the address of an object, so it lives here instead — and entirely here, since a shipping
+		// type has no business carrying a method only a test calls. A runtime that seated the field
 		// differently would now fault rather than quietly slow down, and this is what would catch it.
 		//
 		// Only a sixty four bit runtime promises this. ECMA-335 I.12.6.2 aligns an eight byte value on the
@@ -110,22 +111,22 @@ public class StorageTests
 		if (IntPtr.Size != sizeof(Int64))
 			return;
 
-		Atomic<Byte>.ProbeFieldIsWordAligned().Should().BeTrue();
-		Atomic<Int16>.ProbeFieldIsWordAligned().Should().BeTrue();
-		Atomic<Int32>.ProbeFieldIsWordAligned().Should().BeTrue();
-		Atomic<Int64>.ProbeFieldIsWordAligned().Should().BeTrue();
-		Atomic<Double>.ProbeFieldIsWordAligned().Should().BeTrue();
-		Atomic<Colour>.ProbeFieldIsWordAligned().Should().BeTrue();
+		FieldIsWordAligned<Byte>().Should().BeTrue();
+		FieldIsWordAligned<Int16>().Should().BeTrue();
+		FieldIsWordAligned<Int32>().Should().BeTrue();
+		FieldIsWordAligned<Int64>().Should().BeTrue();
+		FieldIsWordAligned<Double>().Should().BeTrue();
+		FieldIsWordAligned<Colour>().Should().BeTrue();
 
 		// The awkward sizes matter most: these are the ones with slack behind them.
-		Atomic<Three>.ProbeFieldIsWordAligned().Should().BeTrue();
-		Atomic<Five>.ProbeFieldIsWordAligned().Should().BeTrue();
-		Atomic<Six>.ProbeFieldIsWordAligned().Should().BeTrue();
-		Atomic<Seven>.ProbeFieldIsWordAligned().Should().BeTrue();
+		FieldIsWordAligned<Three>().Should().BeTrue();
+		FieldIsWordAligned<Five>().Should().BeTrue();
+		FieldIsWordAligned<Six>().Should().BeTrue();
+		FieldIsWordAligned<Seven>().Should().BeTrue();
 
 		// Eight bytes with an alignment of four, the case that faulted on arm64 when a second field
 		// pushed it off a word boundary.
-		Atomic<Eight>.ProbeFieldIsWordAligned().Should().BeTrue();
+		FieldIsWordAligned<Eight>().Should().BeTrue();
 	}
 
 	[Fact]
@@ -254,6 +255,21 @@ public class StorageTests
 			thread.Join();
 
 		bytes.Should().Be(Threads * (Int64)PerThread * BoxSize);
+	}
+
+	/// <summary>Checks that a cell's field really does begin on a word boundary.</summary>
+	/// <typeparam name="T">The type of the value held by the cell.</typeparam>
+	/// <returns><see langword="true"/> when an eight byte view of the field would be aligned.</returns>
+	/// <remarks>
+	/// The alignment follows from <see cref="Atomic{T}"/> declaring a single field, so this asserts an
+	/// invariant rather than discovering a fact. A collection moving the cell is harmless: the offset of
+	/// the field within the object is fixed and every object begins on a word boundary, so the answer
+	/// does not depend on where it sits.
+	/// </remarks>
+	private static unsafe Boolean FieldIsWordAligned<T>() where T : unmanaged
+	{
+		var probe = new Atomic<T>(default);
+		return ((nint)Unsafe.AsPointer(ref probe.Storage) & (sizeof(Int64) - 1)) == 0;
 	}
 
 	private static Int64 MeasureWrites<T>(IAtomic<T> atomic, T value)

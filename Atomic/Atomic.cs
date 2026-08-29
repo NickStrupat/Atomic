@@ -25,9 +25,9 @@ namespace NickStrupat;
 /// <para>
 /// Adding a second field breaks both facts at once: the runtime is free to seat that field first, which
 /// pushes the value off a word boundary and raises <see cref="DataMisalignedException"/> on arm64. The
-/// bet is kept honest by a test calling <see cref="ProbeFieldIsWordAligned"/> rather than by a run time
-/// check, because branching on it costs every access a static load and a branch that NativeAOT cannot
-/// fold away.
+/// bet is kept honest by a test that takes the address of the field and looks, rather than by a run
+/// time check, because branching on it costs every access a static load and a branch that NativeAOT
+/// cannot fold away.
 /// </para>
 /// <para>
 /// A reference is swapped through the object overloads, which keep the GC write barrier. Everything
@@ -46,7 +46,7 @@ public sealed class Atomic<T>
 	/// </summary>
 	private T storage;
 
-	/// <summary>The value, by reference, for the extensions which apply an instruction to it directly.</summary>
+	/// <summary>The value, by reference, for anything that applies an instruction to it directly.</summary>
 	/// <remarks>
 	/// Handing this to <see cref="Interlocked"/> is only sound for a value the hardware has an
 	/// instruction for, which is why <see cref="AtomicExtensions"/> reaches for it only under a
@@ -91,28 +91,6 @@ public sealed class Atomic<T>
 	{
 		[MethodImpl(MethodImplOptions.AggressiveInlining)]
 		get => !typeof(T).IsValueType;
-	}
-
-	/// <summary>Checks that the field really does begin on a word boundary.</summary>
-	/// <returns>
-	/// <see langword="true"/> when an eight byte view of the field is aligned, which is what
-	/// <see cref="IsInline"/> assumes.
-	/// </returns>
-	/// <remarks>
-	/// For the tests, not for <see cref="IsInline"/>. The alignment follows from this class having a
-	/// single field, so this asserts an invariant rather than discovering a fact, and a runtime that broke
-	/// it would fault rather than quietly fall back to the monitor — which is the louder of the two
-	/// failures, and the one more likely to be noticed.
-	/// A collection moving the probe is harmless: the offset of the field within the object is fixed,
-	/// and every object begins on a word boundary, so the answer does not depend on where it sits.
-	/// </remarks>
-	internal static unsafe Boolean ProbeFieldIsWordAligned()
-	{
-		if (RuntimeHelpers.IsReferenceOrContainsReferences<T>())
-			return false; // never asked of these, and default! would be a null to store
-
-		var probe = new Atomic<T>(default!);
-		return ((nint)Unsafe.AsPointer(ref probe.storage) & (sizeof(Int64) - 1)) == 0;
 	}
 
 	/// <summary>Widens a value to the whole word, zeroing whatever the value does not occupy.</summary>
