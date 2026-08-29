@@ -4,6 +4,10 @@ A generic atomic cell for .NET. Lock-free and allocation-free for references and
 to a word — including the three, five, six and seven byte structs that no interlocked instruction
 matches. A monitor covers everything else, and `IsLockFree` tells you which one you got.
 
+```
+dotnet add package NickStrupat.Atomic
+```
+
 ```csharp
 var counter = new Atomic<Int64>(0);
 counter.Increment();                       // a single interlocked instruction
@@ -15,7 +19,7 @@ var current = new Atomic<String?>(null);   // null is an ordinary value, includi
 current.TryCompareExchange("first", comparand: null, out _);
 ```
 
-Targets `net10.0`. One field, no boxing, nothing allocated per operation.
+Targets `net10.0`, depends on nothing. One field, no boxing, nothing allocated per operation.
 
 ## How a value is stored
 
@@ -266,6 +270,8 @@ spend; see *Awkward sizes* above for what that field would cost.
 | `Candidates/` | `BoxAtomic<T>` and `SeqLockAtomic<T>`, the designs this one was chosen over, plus the `IAtomic<T>` interface and the struct adapters that let one suite and one harness drive all three. |
 | `Tests/` | Correctness one thread at a time, thread safety under several, and the layout, allocation and strategy facts each implementation rests on. |
 | `Benchmarks/` | Per category: one operation at a time, throughput under contention, and what the allocations cost the rest of the process. |
+
+Only `Atomic/` is packed. MIT licensed.
 
 ### Tests
 

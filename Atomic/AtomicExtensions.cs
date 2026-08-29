@@ -8,7 +8,7 @@ namespace NickStrupat;
 /// <remarks>
 /// <para>
 /// Each of these is a compare-and-exchange loop rather than a single instruction: nothing here knows
-/// the shape of <typeparamref name="T"/> well enough to hand a reference to <c>Interlocked.Add</c>, so
+/// the shape of the value well enough to hand a reference to <c>Interlocked.Add</c>, so
 /// the loop is what remains. Uncontended that costs nothing measurable, because the first comparison
 /// succeeds; contended it costs a retry for every writer that lands first, where a native instruction
 /// would not have to retry at all.

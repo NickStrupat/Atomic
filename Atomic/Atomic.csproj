@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
         <TargetFramework>net10.0</TargetFramework>
@@ -7,7 +7,31 @@
         <WarningsAsErrors>nullable</WarningsAsErrors>
         <RootNamespace>NickStrupat</RootNamespace>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
     </PropertyGroup>
+
+    <PropertyGroup>
+        <PackageId>NickStrupat.Atomic</PackageId>
+        <Version>1.0.0</Version>
+        <Authors>Nick Strupat</Authors>
+        <Copyright>Copyright © 2026 Nick Strupat</Copyright>
+        <Description>A generic atomic cell for .NET. Lock-free and allocation-free for references and for any unmanaged value up to a machine word, including the three, five, six and seven byte structs that no interlocked instruction matches. Values too wide to swap in place fall back to a monitor, and Atomic&lt;T&gt;.IsLockFree reports which one you got.</Description>
+        <PackageTags>atomic;interlocked;lock-free;concurrency;threading;thread-safety;compare-exchange;cas;volatile;memory-model</PackageTags>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <PackageProjectUrl>https://github.com/NickStrupat/Atomic</PackageProjectUrl>
+        <RepositoryUrl>https://github.com/NickStrupat/Atomic.git</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
+        <PublishRepositoryUrl>true</PublishRepositoryUrl>
+        <EmbedUntrackedSources>true</EmbedUntrackedSources>
+        <IncludeSymbols>true</IncludeSymbols>
+        <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <None Include="../README.md" Pack="true" PackagePath="\" />
+        <None Include="../LICENSE" Pack="true" PackagePath="\" />
+    </ItemGroup>
 
     <ItemGroup>
         <InternalsVisibleTo Include="Tests" />
