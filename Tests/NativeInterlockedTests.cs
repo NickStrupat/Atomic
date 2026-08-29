@@ -135,6 +135,51 @@ public class NativeInterlockedTests
 	}
 
 	[Fact]
+	public void Subtract_WhenGeneric_MatchesTheOperatorForEveryTypeThatHasAnInstruction()
+	{
+		Generic.Subtract(new Atomic<Int32>(10), 3).Should().Be(7);
+		Generic.Subtract(new Atomic<Int64>(10L), 3L).Should().Be(7L);
+		Generic.Subtract(new Atomic<UInt32>(10U), 3U).Should().Be(7U);
+		Generic.Subtract(new Atomic<UInt64>(10UL), 3UL).Should().Be(7UL);
+
+		// Underflow wraps, the same as the operator does.
+		Generic.Subtract(new Atomic<UInt32>(0U), 1U).Should().Be(UInt32.MaxValue);
+		Generic.Subtract(new Atomic<UInt64>(0UL), 1UL).Should().Be(UInt64.MaxValue);
+
+		// No instruction for these, so the same call takes the loop.
+		Generic.Subtract(new Atomic<Decimal>(10m), 3m).Should().Be(7m);
+		Generic.Subtract(new Atomic<Int16>(10), (Int16)3).Should().Be((Int16)7);
+	}
+
+	[Fact]
+	public void Subtract_WhenTheNegationOverflows_StillAgreesWithTheLoop()
+	{
+		// There is no interlocked subtract, so this one adds the negation — and subtracting
+		// Int32.MinValue is where that looks wrong, because negating it gives it straight back. Adding it
+		// is still subtracting it, both wrapping the same way, and the loop beside it is what says so.
+		foreach (var start in new[] { 0, 1, -1, Int32.MaxValue, Int32.MinValue })
+		{
+			var byInstruction = new Atomic<Int32>(start);
+			var byLoop = new Atomic<Int32>(start);
+
+			Generic.Subtract(byInstruction, Int32.MinValue)
+				.Should().Be(Loop(byLoop, current => current - Int32.MinValue));
+			byInstruction.Read().Should().Be(byLoop.Read());
+		}
+	}
+
+	[Fact]
+	public void Subtract_WhenGeneric_LeavesTheRestOfTheWordAlone()
+	{
+		var atomic = new Atomic<Int32>(Int32.MinValue);
+
+		Generic.Subtract(atomic, 1).Should().Be(Int32.MaxValue);
+
+		atomic.TryCompareExchange(7, Int32.MaxValue, out _).Should().BeTrue();
+		atomic.Read().Should().Be(7);
+	}
+
+	[Fact]
 	public void WhenTheCallerIsGeneric_NothingIsAllocated()
 	{
 		// The specialisation crosses between T and the type the instruction acts on by casting through
@@ -146,12 +191,14 @@ public class NativeInterlockedTests
 		var flags = new Atomic<Int32>(0);
 		Generic.Increment(counter);
 		Generic.Add(flags, 1);
+		Generic.Subtract(flags, 1);
 
 		var before = GC.GetAllocatedBytesForCurrentThread();
 		for (var i = 0; i < 1_000; i++)
 		{
 			Generic.Increment(counter);
 			Generic.Add(flags, 1);
+			Generic.Subtract(flags, 1);
 		}
 
 		(GC.GetAllocatedBytesForCurrentThread() - before).Should().Be(0);
@@ -197,6 +244,9 @@ public class NativeInterlockedTests
 
 		public static T Add<T>(Atomic<T> atomic, T addend) where T : IAdditionOperators<T, T, T> =>
 			atomic.Add(addend);
+
+		public static T Subtract<T>(Atomic<T> atomic, T subtrahend) where T : ISubtractionOperators<T, T, T> =>
+			atomic.Subtract(subtrahend);
 	}
 
 	[Fact]

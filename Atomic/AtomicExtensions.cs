@@ -13,8 +13,9 @@ namespace NickStrupat;
 /// lands first, where a native instruction would not have to retry at all.
 /// </para>
 /// <para>
-/// Where an instruction does exist, these use it. <see cref="Add"/>, <see cref="Increment"/>,
-/// <see cref="Decrement"/>, <see cref="And"/> and <see cref="Or"/> test <c>typeof(T)</c> against the
+/// Where an instruction does exist, these use it. <see cref="Add"/>, <see cref="Subtract"/>,
+/// <see cref="Increment"/>, <see cref="Decrement"/>, <see cref="And"/> and <see cref="Or"/> test
+/// <c>typeof(T)</c> against the
 /// four integers <see cref="Interlocked"/> covers, and the JIT folds that test when it specialises the
 /// method — so an instantiation with an instruction is the instruction and nothing else, and one
 /// without is the loop and nothing else. Neither carries the test.
@@ -134,6 +135,31 @@ public static class AtomicExtensions
 	where T : ISubtractionOperators<T, T, T>
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
+
+		// There is no interlocked subtract, but adding the two's complement negation is the same
+		// operation on these types, including where the negation itself overflows: negating Int32.MinValue
+		// gives Int32.MinValue back, and adding that is subtracting it. The unsigned pair are written as a
+		// subtraction from zero because unary minus on them widens to a signed type first.
+		if (typeof(T) == typeof(Int32))
+		{
+			var negated = unchecked(-(Int32)(Object)subtrahend);
+			return (T)(Object)Interlocked.Add(ref ((Atomic<Int32>)(Object)atomic).Storage, negated);
+		}
+		if (typeof(T) == typeof(Int64))
+		{
+			var negated = unchecked(-(Int64)(Object)subtrahend);
+			return (T)(Object)Interlocked.Add(ref ((Atomic<Int64>)(Object)atomic).Storage, negated);
+		}
+		if (typeof(T) == typeof(UInt32))
+		{
+			var negated = unchecked(0U - (UInt32)(Object)subtrahend);
+			return (T)(Object)Interlocked.Add(ref ((Atomic<UInt32>)(Object)atomic).Storage, negated);
+		}
+		if (typeof(T) == typeof(UInt64))
+		{
+			var negated = unchecked(0UL - (UInt64)(Object)subtrahend);
+			return (T)(Object)Interlocked.Add(ref ((Atomic<UInt64>)(Object)atomic).Storage, negated);
+		}
 
 		var current = atomic.Read();
 		while (true)

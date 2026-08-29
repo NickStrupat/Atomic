@@ -76,10 +76,15 @@ history.Update(entry, static (e, current) => current.Add(e));
 ```
 
 For `Atomic<Int32>`, `Atomic<Int64>`, `Atomic<UInt32>` and `Atomic<UInt64>`, `Increment`, `Decrement`,
-`Add`, `And` and `Or` issue the instruction directly with no loop. You don't opt in: the method tests
-`typeof(T)`, and the JIT folds that test when it specialises the method, so `Atomic<Int64>.Increment` is
-one `ldaddal` with nothing in front of it and `Atomic<Decimal>.Increment` is the loop with nothing in
-front of it either.
+`Add`, `Subtract`, `And` and `Or` issue the instruction directly with no loop. You don't opt in: the
+method tests `typeof(T)`, and the JIT folds that test when it specialises the method, so
+`Atomic<Int64>.Increment` is one `ldaddal` with nothing in front of it, and `Atomic<Decimal>.Increment`
+is the loop with nothing in front of it either. `Subtract` adds the negation, there being no
+interlocked subtract — one extra instruction, and it wraps correctly even for the value whose negation
+is itself an overflow.
+
+`Xor`, `Max`, `Min` and `Update` stay loops for every `T`: the runtime exposes no interlocked
+instruction for the first three, and the last takes a function.
 
 Specialising inside the method rather than declaring overloads on the concrete types is what makes this
 reach generic code. Overload resolution happens where the type is written down, and here it isn't:
