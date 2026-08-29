@@ -217,9 +217,9 @@ instructions. The categories that separate them are the ones nothing can swap in
   makes: it allocates nothing, ever, and pays a monitor for the values that do not fit its one field.
 
 ```
-Interlocked.Increment on a plain field    7.120 ns
-Atomic<Int64>.Increment                   6.914 ns
-the same, by compare-and-exchange loop    7.006 ns
+Interlocked.Increment on a plain field    6.926 ns
+Atomic<Int64>.Increment                   6.972 ns
+the same, by compare-and-exchange loop    7.112 ns
 ```
 
 The abstraction is free where it can be. `Benchmarks/` also holds a contended harness

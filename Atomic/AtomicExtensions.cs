@@ -53,7 +53,6 @@ public static class AtomicExtensions
 	/// <returns>The value stored.</returns>
 	/// <exception cref="ArgumentNullException"><paramref name="atomic"/> or <paramref name="update"/> is null.</exception>
 	public static T Update<T>(this Atomic<T> atomic, Func<T, T> update)
-
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
 		ArgumentNullException.ThrowIfNull(update);
@@ -80,7 +79,6 @@ public static class AtomicExtensions
 	/// <returns>The value stored.</returns>
 	/// <exception cref="ArgumentNullException"><paramref name="atomic"/> or <paramref name="update"/> is null.</exception>
 	public static T Update<TState, T>(this Atomic<T> atomic, TState state, Func<TState, T, T> update)
-
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
 		ArgumentNullException.ThrowIfNull(update);

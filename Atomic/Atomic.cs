@@ -17,10 +17,10 @@ namespace NickStrupat;
 /// Two facts about the runtime allow that, and both depend on <c>storage</c> being the only field this
 /// class declares. On a sixty four bit runtime a lone field begins eight bytes into the object, and
 /// objects are eight byte aligned, so the view is aligned; on a thirty two bit one neither holds, which
-/// is why <see cref="IsInline"/> tests the word size. And the minimum size of an object leaves a full eight bytes there, so a
-/// three byte value has five bytes of slack behind it which belong to nobody. Writes zero the slack, so
-/// the bit pattern of a given value is always the same and <see cref="CompareExchange"/> compares
-/// something meaningful.
+/// is why <see cref="IsInline"/> tests the word size. And the minimum size of an object leaves a full
+/// eight bytes there, so a three byte value has five bytes of slack behind it which belong to nobody.
+/// Writes zero the slack, so the bit pattern of a given value is always the same and
+/// <see cref="CompareExchange"/> compares something meaningful.
 /// </para>
 /// <para>
 /// Adding a second field breaks both facts at once: the runtime is free to seat that field first, which
@@ -38,7 +38,6 @@ namespace NickStrupat;
 /// </para>
 /// </remarks>
 public sealed class Atomic<T>
-
 {
 	/// <summary>
 	/// The value. This must remain the only field in the class: see the remarks on

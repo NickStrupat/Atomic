@@ -15,7 +15,6 @@ namespace NickStrupat;
 /// every write.
 /// </remarks>
 public sealed class BoxAtomic<T> : IAtomic<T>
-
 {
 	private Int64 unmanaged;
 	private Object? managed;

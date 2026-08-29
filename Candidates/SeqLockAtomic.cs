@@ -12,8 +12,8 @@ namespace NickStrupat;
 /// <typeparam name="T">The type of the value held by the cell.</typeparam>
 /// <remarks>
 /// <para>
-/// The fast paths match <see cref="Atomic{T}"/>, minus the widening it can afford, and leave the counter unused. A wider value
-/// holding no references uses the counter as a seqlock: a writer marks it odd, writes, then marks it
+/// The fast paths match <see cref="Atomic{T}"/>, minus the widening it can afford, and leave the
+/// counter unused. A wider value holding no references uses the counter as a seqlock: a writer marks it odd, writes, then marks it
 /// even, while a reader takes a snapshot between two even readings of the same value and retries if
 /// they disagree. A reader can therefore copy a half-written value, which is harmless for bytes and
 /// unsurvivable for references — so a value type holding references falls back to a monitor instead.
@@ -30,7 +30,6 @@ namespace NickStrupat;
 /// </para>
 /// </remarks>
 public sealed class SeqLockAtomic<T> : IAtomic<T>
-
 {
 	private T storage;
 	private Int64 version;

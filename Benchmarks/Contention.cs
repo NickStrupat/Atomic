@@ -89,8 +89,10 @@ public static class Contention
 	/// <typeparam name="T">The type of the value held by the cell.</typeparam>
 	/// <param name="atomic">The cell to increment.</param>
 	/// <remarks>
-	/// The closed overload cannot be chosen here, so this row is the one the specialisation in
-	/// <see cref="AtomicExtensions"/> exists for. It used to run at the speed of the loop.
+	/// This is the callsite the specialisation in <see cref="AtomicExtensions"/> exists for, and it used
+	/// to run at the speed of the loop. It now compiles to the same method as the row above it — there is
+	/// one spelling of <c>Increment</c> left, and both reach it — so the two agreeing is the point rather
+	/// than a coincidence: whether the type is written down at the callsite makes no difference.
 	/// </remarks>
 	private static void IncrementGenerically<T>(Atomic<T> atomic)
 	where T : System.Numerics.IIncrementOperators<T> => atomic.Increment();
