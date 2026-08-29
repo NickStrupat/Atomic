@@ -21,12 +21,15 @@ namespace NickStrupat;
 /// without is the loop and nothing else. Neither carries the test.
 /// </para>
 /// <para>
-/// <see cref="AtomicInterlockedExtensions"/> declares the same five against the closed types and wins
-/// overload resolution against these. That used to be what got a caller the instruction. It no longer
-/// decides anything, because both spellings arrive at the same place — and the difference matters in
-/// the other direction: overload resolution can only pick the closed method where the type is written
-/// down, while this specialisation applies wherever the JIT knows it. Generic code holding an
-/// <see cref="Atomic{T}"/> can only reach these, and paid a loop for every <c>T</c> before it existed.
+/// The instructions themselves are not written here. Under the <c>typeof</c> test the cell is cast to
+/// the closed type and handed to <see cref="AtomicInterlockedExtensions"/>, which is where those five
+/// live for callers who name the type. The cast folds away along with the test and the method inlines,
+/// so the delegation costs nothing and each instruction is written down once rather than twice.
+/// </para>
+/// <para>
+/// Both routes exist because overload resolution can only pick the closed method where the type is
+/// written down. Generic code holding an <see cref="Atomic{T}"/> cannot reach it at all, and paid a
+/// loop for every <c>T</c> before this specialisation existed.
 /// </para>
 /// <para>
 /// The values returned follow <see cref="Interlocked"/>, including where it is inconsistent:
@@ -99,10 +102,10 @@ public static class AtomicExtensions
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
 
-		if (typeof(T) == typeof(Int32)) return Reinterpret<Int32, T>(Interlocked.Add(ref Native<T, Int32>(atomic), Reinterpret<T, Int32>(addend)));
-		if (typeof(T) == typeof(Int64)) return Reinterpret<Int64, T>(Interlocked.Add(ref Native<T, Int64>(atomic), Reinterpret<T, Int64>(addend)));
-		if (typeof(T) == typeof(UInt32)) return Reinterpret<UInt32, T>(Interlocked.Add(ref Native<T, UInt32>(atomic), Reinterpret<T, UInt32>(addend)));
-		if (typeof(T) == typeof(UInt64)) return Reinterpret<UInt64, T>(Interlocked.Add(ref Native<T, UInt64>(atomic), Reinterpret<T, UInt64>(addend)));
+		if (typeof(T) == typeof(Int32)) return Reinterpret<Int32, T>(((Atomic<Int32>)(Object)atomic).Add(Reinterpret<T, Int32>(addend)));
+		if (typeof(T) == typeof(Int64)) return Reinterpret<Int64, T>(((Atomic<Int64>)(Object)atomic).Add(Reinterpret<T, Int64>(addend)));
+		if (typeof(T) == typeof(UInt32)) return Reinterpret<UInt32, T>(((Atomic<UInt32>)(Object)atomic).Add(Reinterpret<T, UInt32>(addend)));
+		if (typeof(T) == typeof(UInt64)) return Reinterpret<UInt64, T>(((Atomic<UInt64>)(Object)atomic).Add(Reinterpret<T, UInt64>(addend)));
 
 		var current = atomic.Read();
 		while (true)
@@ -145,10 +148,10 @@ public static class AtomicExtensions
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
 
-		if (typeof(T) == typeof(Int32)) return Reinterpret<Int32, T>(Interlocked.Increment(ref Native<T, Int32>(atomic)));
-		if (typeof(T) == typeof(Int64)) return Reinterpret<Int64, T>(Interlocked.Increment(ref Native<T, Int64>(atomic)));
-		if (typeof(T) == typeof(UInt32)) return Reinterpret<UInt32, T>(Interlocked.Increment(ref Native<T, UInt32>(atomic)));
-		if (typeof(T) == typeof(UInt64)) return Reinterpret<UInt64, T>(Interlocked.Increment(ref Native<T, UInt64>(atomic)));
+		if (typeof(T) == typeof(Int32)) return Reinterpret<Int32, T>(((Atomic<Int32>)(Object)atomic).Increment());
+		if (typeof(T) == typeof(Int64)) return Reinterpret<Int64, T>(((Atomic<Int64>)(Object)atomic).Increment());
+		if (typeof(T) == typeof(UInt32)) return Reinterpret<UInt32, T>(((Atomic<UInt32>)(Object)atomic).Increment());
+		if (typeof(T) == typeof(UInt64)) return Reinterpret<UInt64, T>(((Atomic<UInt64>)(Object)atomic).Increment());
 
 		var current = atomic.Read();
 		while (true)
@@ -171,10 +174,10 @@ public static class AtomicExtensions
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
 
-		if (typeof(T) == typeof(Int32)) return Reinterpret<Int32, T>(Interlocked.Decrement(ref Native<T, Int32>(atomic)));
-		if (typeof(T) == typeof(Int64)) return Reinterpret<Int64, T>(Interlocked.Decrement(ref Native<T, Int64>(atomic)));
-		if (typeof(T) == typeof(UInt32)) return Reinterpret<UInt32, T>(Interlocked.Decrement(ref Native<T, UInt32>(atomic)));
-		if (typeof(T) == typeof(UInt64)) return Reinterpret<UInt64, T>(Interlocked.Decrement(ref Native<T, UInt64>(atomic)));
+		if (typeof(T) == typeof(Int32)) return Reinterpret<Int32, T>(((Atomic<Int32>)(Object)atomic).Decrement());
+		if (typeof(T) == typeof(Int64)) return Reinterpret<Int64, T>(((Atomic<Int64>)(Object)atomic).Decrement());
+		if (typeof(T) == typeof(UInt32)) return Reinterpret<UInt32, T>(((Atomic<UInt32>)(Object)atomic).Decrement());
+		if (typeof(T) == typeof(UInt64)) return Reinterpret<UInt64, T>(((Atomic<UInt64>)(Object)atomic).Decrement());
 
 		var current = atomic.Read();
 		while (true)
@@ -198,10 +201,10 @@ public static class AtomicExtensions
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
 
-		if (typeof(T) == typeof(Int32)) return Reinterpret<Int32, T>(Interlocked.And(ref Native<T, Int32>(atomic), Reinterpret<T, Int32>(value)));
-		if (typeof(T) == typeof(Int64)) return Reinterpret<Int64, T>(Interlocked.And(ref Native<T, Int64>(atomic), Reinterpret<T, Int64>(value)));
-		if (typeof(T) == typeof(UInt32)) return Reinterpret<UInt32, T>(Interlocked.And(ref Native<T, UInt32>(atomic), Reinterpret<T, UInt32>(value)));
-		if (typeof(T) == typeof(UInt64)) return Reinterpret<UInt64, T>(Interlocked.And(ref Native<T, UInt64>(atomic), Reinterpret<T, UInt64>(value)));
+		if (typeof(T) == typeof(Int32)) return Reinterpret<Int32, T>(((Atomic<Int32>)(Object)atomic).And(Reinterpret<T, Int32>(value)));
+		if (typeof(T) == typeof(Int64)) return Reinterpret<Int64, T>(((Atomic<Int64>)(Object)atomic).And(Reinterpret<T, Int64>(value)));
+		if (typeof(T) == typeof(UInt32)) return Reinterpret<UInt32, T>(((Atomic<UInt32>)(Object)atomic).And(Reinterpret<T, UInt32>(value)));
+		if (typeof(T) == typeof(UInt64)) return Reinterpret<UInt64, T>(((Atomic<UInt64>)(Object)atomic).And(Reinterpret<T, UInt64>(value)));
 
 		var current = atomic.Read();
 		while (true)
@@ -223,10 +226,10 @@ public static class AtomicExtensions
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
 
-		if (typeof(T) == typeof(Int32)) return Reinterpret<Int32, T>(Interlocked.Or(ref Native<T, Int32>(atomic), Reinterpret<T, Int32>(value)));
-		if (typeof(T) == typeof(Int64)) return Reinterpret<Int64, T>(Interlocked.Or(ref Native<T, Int64>(atomic), Reinterpret<T, Int64>(value)));
-		if (typeof(T) == typeof(UInt32)) return Reinterpret<UInt32, T>(Interlocked.Or(ref Native<T, UInt32>(atomic), Reinterpret<T, UInt32>(value)));
-		if (typeof(T) == typeof(UInt64)) return Reinterpret<UInt64, T>(Interlocked.Or(ref Native<T, UInt64>(atomic), Reinterpret<T, UInt64>(value)));
+		if (typeof(T) == typeof(Int32)) return Reinterpret<Int32, T>(((Atomic<Int32>)(Object)atomic).Or(Reinterpret<T, Int32>(value)));
+		if (typeof(T) == typeof(Int64)) return Reinterpret<Int64, T>(((Atomic<Int64>)(Object)atomic).Or(Reinterpret<T, Int64>(value)));
+		if (typeof(T) == typeof(UInt32)) return Reinterpret<UInt32, T>(((Atomic<UInt32>)(Object)atomic).Or(Reinterpret<T, UInt32>(value)));
+		if (typeof(T) == typeof(UInt64)) return Reinterpret<UInt64, T>(((Atomic<UInt64>)(Object)atomic).Or(Reinterpret<T, UInt64>(value)));
 
 		var current = atomic.Read();
 		while (true)
@@ -301,15 +304,6 @@ public static class AtomicExtensions
 		}
 	}
 
-	/// <summary>The cell's storage, seen as the type an interlocked instruction acts on.</summary>
-	/// <typeparam name="T">The type of the value held by the cell.</typeparam>
-	/// <typeparam name="TNative">The type the instruction acts on, which <typeparamref name="T"/> is.</typeparam>
-	/// <param name="atomic">The cell whose storage to take a reference to.</param>
-	/// <returns>A reference to the storage.</returns>
-	[MethodImpl(MethodImplOptions.AggressiveInlining)]
-	private static ref TNative Native<T, TNative>(Atomic<T> atomic) =>
-		ref Unsafe.As<T, TNative>(ref atomic.Storage);
-
 	/// <summary>Reinterprets a value as the type it already is, which the compiler cannot be told.</summary>
 	/// <typeparam name="TFrom">The type the value is held as.</typeparam>
 	/// <typeparam name="TTo">The type it is being read as, which is the same type.</typeparam>
@@ -317,7 +311,8 @@ public static class AtomicExtensions
 	/// <returns>The same value, typed the other way.</returns>
 	/// <remarks>
 	/// Only ever reached under a <c>typeof</c> test that has already established the two are the same
-	/// type. A cast would box; this compiles to nothing.
+	/// type. A cast would box; this compiles to nothing. The cell itself needs no such help — casting the
+	/// reference through <see cref="Object"/> under the same test folds away on its own.
 	/// </remarks>
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	private static TTo Reinterpret<TFrom, TTo>(TFrom value) => Unsafe.As<TFrom, TTo>(ref value);

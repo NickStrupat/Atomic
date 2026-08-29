@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+
 namespace NickStrupat;
 
 /// <summary>
@@ -11,10 +13,11 @@ namespace NickStrupat;
 /// </para>
 /// <para>
 /// Both sets are declared against <see cref="Atomic{T}"/>, and these take precedence because a closed
-/// type beats an open one. That precedence no longer decides anything: since
-/// <see cref="AtomicExtensions"/> began testing <c>typeof(T)</c> and folding the result, reaching past
-/// these to the open method arrives at the same instruction. What is left is that these say so in the
-/// signature rather than leaving it to the JIT, and that they need no operator constraint.
+/// type beats an open one. Which one a caller reaches no longer changes what runs:
+/// <see cref="AtomicExtensions"/> tests <c>typeof(T)</c> and, where it matches, casts the cell and
+/// calls straight into here. So these are the only place each instruction is written down, and they are
+/// marked for inlining because the open method needs them to fold into it — left to its own judgement
+/// the JIT emits a call, and the specialisation stops being free.
 /// </para>
 /// <para>
 /// A four byte instruction here acts on the same address as the cell's own eight byte view of its
@@ -31,6 +34,7 @@ public static class AtomicInterlockedExtensions
 	/// <param name="atomic">The cell to act on.</param>
 	/// <returns>The new value, as <see cref="Interlocked"/> returns it.</returns>
 	/// <exception cref="ArgumentNullException"><paramref name="atomic"/> is null.</exception>
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public static Int32 Increment(this Atomic<Int32> atomic)
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
@@ -41,6 +45,7 @@ public static class AtomicInterlockedExtensions
 	/// <param name="atomic">The cell to act on.</param>
 	/// <returns>The new value, as <see cref="Interlocked"/> returns it.</returns>
 	/// <exception cref="ArgumentNullException"><paramref name="atomic"/> is null.</exception>
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public static Int32 Decrement(this Atomic<Int32> atomic)
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
@@ -52,6 +57,7 @@ public static class AtomicInterlockedExtensions
 	/// <param name="addend">The value to add.</param>
 	/// <returns>The new value, as <see cref="Interlocked"/> returns it.</returns>
 	/// <exception cref="ArgumentNullException"><paramref name="atomic"/> is null.</exception>
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public static Int32 Add(this Atomic<Int32> atomic, Int32 addend)
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
@@ -63,6 +69,7 @@ public static class AtomicInterlockedExtensions
 	/// <param name="value">The mask.</param>
 	/// <returns>The old value, as <see cref="Interlocked"/> returns it.</returns>
 	/// <exception cref="ArgumentNullException"><paramref name="atomic"/> is null.</exception>
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public static Int32 And(this Atomic<Int32> atomic, Int32 value)
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
@@ -74,6 +81,7 @@ public static class AtomicInterlockedExtensions
 	/// <param name="value">The bits to set.</param>
 	/// <returns>The old value, as <see cref="Interlocked"/> returns it.</returns>
 	/// <exception cref="ArgumentNullException"><paramref name="atomic"/> is null.</exception>
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public static Int32 Or(this Atomic<Int32> atomic, Int32 value)
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
@@ -84,6 +92,7 @@ public static class AtomicInterlockedExtensions
 	/// <param name="atomic">The cell to act on.</param>
 	/// <returns>The new value, as <see cref="Interlocked"/> returns it.</returns>
 	/// <exception cref="ArgumentNullException"><paramref name="atomic"/> is null.</exception>
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public static Int64 Increment(this Atomic<Int64> atomic)
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
@@ -94,6 +103,7 @@ public static class AtomicInterlockedExtensions
 	/// <param name="atomic">The cell to act on.</param>
 	/// <returns>The new value, as <see cref="Interlocked"/> returns it.</returns>
 	/// <exception cref="ArgumentNullException"><paramref name="atomic"/> is null.</exception>
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public static Int64 Decrement(this Atomic<Int64> atomic)
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
@@ -105,6 +115,7 @@ public static class AtomicInterlockedExtensions
 	/// <param name="addend">The value to add.</param>
 	/// <returns>The new value, as <see cref="Interlocked"/> returns it.</returns>
 	/// <exception cref="ArgumentNullException"><paramref name="atomic"/> is null.</exception>
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public static Int64 Add(this Atomic<Int64> atomic, Int64 addend)
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
@@ -116,6 +127,7 @@ public static class AtomicInterlockedExtensions
 	/// <param name="value">The mask.</param>
 	/// <returns>The old value, as <see cref="Interlocked"/> returns it.</returns>
 	/// <exception cref="ArgumentNullException"><paramref name="atomic"/> is null.</exception>
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public static Int64 And(this Atomic<Int64> atomic, Int64 value)
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
@@ -127,6 +139,7 @@ public static class AtomicInterlockedExtensions
 	/// <param name="value">The bits to set.</param>
 	/// <returns>The old value, as <see cref="Interlocked"/> returns it.</returns>
 	/// <exception cref="ArgumentNullException"><paramref name="atomic"/> is null.</exception>
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public static Int64 Or(this Atomic<Int64> atomic, Int64 value)
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
@@ -137,6 +150,7 @@ public static class AtomicInterlockedExtensions
 	/// <param name="atomic">The cell to act on.</param>
 	/// <returns>The new value, as <see cref="Interlocked"/> returns it.</returns>
 	/// <exception cref="ArgumentNullException"><paramref name="atomic"/> is null.</exception>
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public static UInt32 Increment(this Atomic<UInt32> atomic)
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
@@ -147,6 +161,7 @@ public static class AtomicInterlockedExtensions
 	/// <param name="atomic">The cell to act on.</param>
 	/// <returns>The new value, as <see cref="Interlocked"/> returns it.</returns>
 	/// <exception cref="ArgumentNullException"><paramref name="atomic"/> is null.</exception>
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public static UInt32 Decrement(this Atomic<UInt32> atomic)
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
@@ -158,6 +173,7 @@ public static class AtomicInterlockedExtensions
 	/// <param name="addend">The value to add.</param>
 	/// <returns>The new value, as <see cref="Interlocked"/> returns it.</returns>
 	/// <exception cref="ArgumentNullException"><paramref name="atomic"/> is null.</exception>
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public static UInt32 Add(this Atomic<UInt32> atomic, UInt32 addend)
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
@@ -169,6 +185,7 @@ public static class AtomicInterlockedExtensions
 	/// <param name="value">The mask.</param>
 	/// <returns>The old value, as <see cref="Interlocked"/> returns it.</returns>
 	/// <exception cref="ArgumentNullException"><paramref name="atomic"/> is null.</exception>
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public static UInt32 And(this Atomic<UInt32> atomic, UInt32 value)
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
@@ -180,6 +197,7 @@ public static class AtomicInterlockedExtensions
 	/// <param name="value">The bits to set.</param>
 	/// <returns>The old value, as <see cref="Interlocked"/> returns it.</returns>
 	/// <exception cref="ArgumentNullException"><paramref name="atomic"/> is null.</exception>
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public static UInt32 Or(this Atomic<UInt32> atomic, UInt32 value)
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
@@ -190,6 +208,7 @@ public static class AtomicInterlockedExtensions
 	/// <param name="atomic">The cell to act on.</param>
 	/// <returns>The new value, as <see cref="Interlocked"/> returns it.</returns>
 	/// <exception cref="ArgumentNullException"><paramref name="atomic"/> is null.</exception>
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public static UInt64 Increment(this Atomic<UInt64> atomic)
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
@@ -200,6 +219,7 @@ public static class AtomicInterlockedExtensions
 	/// <param name="atomic">The cell to act on.</param>
 	/// <returns>The new value, as <see cref="Interlocked"/> returns it.</returns>
 	/// <exception cref="ArgumentNullException"><paramref name="atomic"/> is null.</exception>
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public static UInt64 Decrement(this Atomic<UInt64> atomic)
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
@@ -211,6 +231,7 @@ public static class AtomicInterlockedExtensions
 	/// <param name="addend">The value to add.</param>
 	/// <returns>The new value, as <see cref="Interlocked"/> returns it.</returns>
 	/// <exception cref="ArgumentNullException"><paramref name="atomic"/> is null.</exception>
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public static UInt64 Add(this Atomic<UInt64> atomic, UInt64 addend)
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
@@ -222,6 +243,7 @@ public static class AtomicInterlockedExtensions
 	/// <param name="value">The mask.</param>
 	/// <returns>The old value, as <see cref="Interlocked"/> returns it.</returns>
 	/// <exception cref="ArgumentNullException"><paramref name="atomic"/> is null.</exception>
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public static UInt64 And(this Atomic<UInt64> atomic, UInt64 value)
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
@@ -233,6 +255,7 @@ public static class AtomicInterlockedExtensions
 	/// <param name="value">The bits to set.</param>
 	/// <returns>The old value, as <see cref="Interlocked"/> returns it.</returns>
 	/// <exception cref="ArgumentNullException"><paramref name="atomic"/> is null.</exception>
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public static UInt64 Or(this Atomic<UInt64> atomic, UInt64 value)
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
