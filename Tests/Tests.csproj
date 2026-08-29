@@ -29,6 +29,7 @@
     <ItemGroup>
         <ProjectReference Include="..\Atomic\Atomic.csproj" />
         <ProjectReference Include="..\Candidates\Candidates.csproj" />
+        <ProjectReference Include="..\CodegenProbe\CodegenProbe.csproj" />
     </ItemGroup>
 
 </Project>

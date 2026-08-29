@@ -282,7 +282,8 @@ runtime — x86, arm32, wasm — neither holds for the widened view, so every va
 `IsLockFree` reports this.
 
 **NativeAOT is supported and folds fully.** `Atomic<Int32>.Read()` compiles to a single `ldapr` and
-inlines into its caller, the same as under the JIT.
+inlines into its caller, the same as under the JIT. Unlike the JIT, this is checked by hand rather than
+by a test — see below.
 
 **The monitor path locks on the instance.** Outside code holding a reference to a cell can `lock` on it
 and interfere. A private lock object would be a second field, which is the one thing this design cannot
@@ -296,6 +297,7 @@ spend; see *Awkward sizes* above for what that field would cost.
 | `Candidates/` | `BoxAtomic<T>` and `SeqLockAtomic<T>`, the designs this one was chosen over, plus the `IAtomic<T>` interface and the struct adapters that let one suite and one harness drive all three. |
 | `Tests/` | Correctness one thread at a time, thread safety under several, and the layout, allocation and strategy facts each implementation rests on. |
 | `Benchmarks/` | Per category: one operation at a time, throughput under contention, and what the allocations cost the rest of the process. |
+| `CodegenProbe/` | One call per cell operation, in methods that cannot be inlined away, for the disassembler to be pointed at. |
 
 Only `Atomic/` is packed. MIT licensed.
 
@@ -330,8 +332,31 @@ inside the same nanosecond sometimes does not happen — measured at about one r
 property gets a few attempts and has to catch the broken cell in one of them. Failing every attempt in
 a row is a different claim from losing a coin toss, and it is the one that fails the build.
 
+### Codegen
+
+Every performance claim above rests on the strategy folding away, and nothing else in the suite would
+notice if it stopped. A cell that tested `IsInline` on each access would pass every other test here.
+
+So `CodegenTests` runs `CodegenProbe` as a separate process with the JIT's disassembler on and reads
+what came out: that reading a word reaches no monitor and calls nothing at all, that reading a wider
+value does reach one, and that `Increment` on an `Int64` is an `ldaddal` with no compare-and-swap left
+beside it. Each assertion is paired with a case that must show the opposite, because a test that only
+looks for something's absence passes just as happily when pointed at nothing.
+
+It needs an optimised build, and skips with a note on a Debug one:
+
+```
+dotnet test -c Release
+```
+
+The monitor half is read from the names of runtime helpers and holds on any architecture. The
+instruction half has to be read as mnemonics and is written down for arm64 only; elsewhere it skips
+rather than guesses. **NativeAOT is not covered** — the claim in *Requirements and limits* was
+established by publishing and disassembling by hand, and nothing re-checks it.
+
 ```
 dotnet test
+dotnet test -c Release
 dotnet run -c Release --project Benchmarks -- --filter "*"
 dotnet run -c Release --project Benchmarks -- contention
 dotnet run -c Release --project Benchmarks -- gc
