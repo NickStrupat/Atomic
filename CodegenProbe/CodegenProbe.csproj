@@ -13,4 +13,16 @@
         <ProjectReference Include="..\Atomic\Atomic.csproj" />
     </ItemGroup>
 
+    <!--
+        Asks the ahead-of-time compiler for the same disassembly the JIT gives through DOTNET_JitDisasm.
+        Set only when CodegenTests is publishing this to read what ILC produced; an ordinary build and an
+        ordinary publish are unaffected.
+    -->
+    <ItemGroup Condition="'$(AtomicAotDisasmFilter)' != ''">
+        <!-- Without this the compiler writes several listings to the file at once, spliced together. -->
+        <IlcArg Include="--parallelism:1" />
+        <IlcArg Include="--codegenopt:JitDisasm=$(AtomicAotDisasmFilter)" />
+        <IlcArg Include="--codegenopt:JitStdOutFile=$(AtomicAotDisasmFile)" />
+    </ItemGroup>
+
 </Project>

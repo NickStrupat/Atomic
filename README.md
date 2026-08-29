@@ -282,8 +282,7 @@ runtime — x86, arm32, wasm — neither holds for the widened view, so every va
 `IsLockFree` reports this.
 
 **NativeAOT is supported and folds fully.** `Atomic<Int32>.Read()` compiles to a single `ldapr` and
-inlines into its caller, the same as under the JIT. Unlike the JIT, this is checked by hand rather than
-by a test — see below.
+inlines into its caller, the same as under the JIT, and is held to that by the same tests.
 
 **The monitor path locks on the instance.** Outside code holding a reference to a cell can `lock` on it
 and interfere. A private lock object would be a second field, which is the one thing this design cannot
@@ -337,11 +336,17 @@ a row is a different claim from losing a coin toss, and it is the one that fails
 Every performance claim above rests on the strategy folding away, and nothing else in the suite would
 notice if it stopped. A cell that tested `IsInline` on each access would pass every other test here.
 
-So `CodegenTests` runs `CodegenProbe` as a separate process with the JIT's disassembler on and reads
-what came out: that reading a word reaches no monitor and calls nothing at all, that reading a wider
-value does reach one, and that `Increment` on an `Int64` is an `ldaddal` with no compare-and-swap left
-beside it. Each assertion is paired with a case that must show the opposite, because a test that only
-looks for something's absence passes just as happily when pointed at nothing.
+So `CodegenTests` reads the code a compiler actually produced: that reading a word reaches no monitor
+and calls nothing at all, that reading a wider value does reach one, and that `Increment` on an `Int64`
+is an `ldaddal` with no compare-and-swap left beside it. Each assertion is paired with a case that must
+show the opposite, because one that only looks for something's absence passes just as happily when
+pointed at nothing.
+
+Both compilers are held to the same statements, since the library claims the same of both and the JIT
+folding says nothing about NativeAOT. The JIT is read by running `CodegenProbe` with
+`DOTNET_JitDisasm` set; NativeAOT by publishing it and asking the ahead-of-time compiler for the same
+listing. That publish takes a few seconds and needs a native toolchain — a machine without one skips,
+which is a visible outcome rather than a quiet pass.
 
 It needs an optimised build, and skips with a note on a Debug one:
 
@@ -350,9 +355,14 @@ dotnet test -c Release
 ```
 
 The monitor half is read from the names of runtime helpers and holds on any architecture. The
-instruction half has to be read as mnemonics and is written down for arm64 only; elsewhere it skips
-rather than guesses. **NativeAOT is not covered** — the claim in *Requirements and limits* was
-established by publishing and disassembling by hand, and nothing re-checks it.
+instruction half cannot be — the difference between one instruction and a retry loop is not a call to
+anything — so it is read as mnemonics, written down for arm64 only, and skips elsewhere rather than
+guessing.
+
+All four were checked against a deliberately broken library rather than assumed to work. That is worth
+doing here more than most places: an early attempt to break the folding, by adding a static the JIT
+could not treat as constant, still folded under NativeAOT, which sees the whole program and can prove
+a field nothing writes. It took a value read from the environment to stop both.
 
 ```
 dotnet test
