@@ -136,6 +136,29 @@ public class NativeInterlockedTests
 	}
 
 	[Fact]
+	public void WhenTheCallerIsGeneric_NothingIsAllocated()
+	{
+		// The specialisation crosses between T and the type the instruction acts on by casting through
+		// Object, in both directions, which is a box and an unbox written down. Neither survives: the JIT
+		// removes them where it knows the type, and it knows it here from the instantiation alone, before
+		// any tiering. Were that ever to stop being true the code would still be correct and would
+		// quietly allocate on every call, which is what this watches for.
+		var counter = new Atomic<Int64>(0);
+		var flags = new Atomic<Int32>(0);
+		Generic.Increment(counter);
+		Generic.Add(flags, 1);
+
+		var before = GC.GetAllocatedBytesForCurrentThread();
+		for (var i = 0; i < 1_000; i++)
+		{
+			Generic.Increment(counter);
+			Generic.Add(flags, 1);
+		}
+
+		(GC.GetAllocatedBytesForCurrentThread() - before).Should().Be(0);
+	}
+
+	[Fact]
 	public void WhenTheCallerIsGeneric_TheRestOfTheWordIsStillLeftAlone()
 	{
 		// The specialisation hands a four byte instruction a reference into an eight byte field, the same

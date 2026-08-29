@@ -1,5 +1,4 @@
 using System.Numerics;
-using System.Runtime.CompilerServices;
 
 namespace NickStrupat;
 
@@ -23,8 +22,10 @@ namespace NickStrupat;
 /// <para>
 /// The instructions themselves are not written here. Under the <c>typeof</c> test the cell is cast to
 /// the closed type and handed to <see cref="AtomicInterlockedExtensions"/>, which is where those five
-/// live for callers who name the type. The cast folds away along with the test and the method inlines,
-/// so the delegation costs nothing and each instruction is written down once rather than twice.
+/// live for callers who name the type, and the values cross the same way. Every one of those casts
+/// folds away with the test that guards it — the reference casts to nothing at all, and the box and
+/// unbox around the values are removed before they are ever emitted — so the delegation costs nothing,
+/// allocates nothing, and each instruction is written down once rather than twice.
 /// </para>
 /// <para>
 /// Both routes exist because overload resolution can only pick the closed method where the type is
@@ -102,10 +103,10 @@ public static class AtomicExtensions
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
 
-		if (typeof(T) == typeof(Int32)) return Reinterpret<Int32, T>(((Atomic<Int32>)(Object)atomic).Add(Reinterpret<T, Int32>(addend)));
-		if (typeof(T) == typeof(Int64)) return Reinterpret<Int64, T>(((Atomic<Int64>)(Object)atomic).Add(Reinterpret<T, Int64>(addend)));
-		if (typeof(T) == typeof(UInt32)) return Reinterpret<UInt32, T>(((Atomic<UInt32>)(Object)atomic).Add(Reinterpret<T, UInt32>(addend)));
-		if (typeof(T) == typeof(UInt64)) return Reinterpret<UInt64, T>(((Atomic<UInt64>)(Object)atomic).Add(Reinterpret<T, UInt64>(addend)));
+		if (typeof(T) == typeof(Int32)) return (T)(Object)((Atomic<Int32>)(Object)atomic).Add((Int32)(Object)addend);
+		if (typeof(T) == typeof(Int64)) return (T)(Object)((Atomic<Int64>)(Object)atomic).Add((Int64)(Object)addend);
+		if (typeof(T) == typeof(UInt32)) return (T)(Object)((Atomic<UInt32>)(Object)atomic).Add((UInt32)(Object)addend);
+		if (typeof(T) == typeof(UInt64)) return (T)(Object)((Atomic<UInt64>)(Object)atomic).Add((UInt64)(Object)addend);
 
 		var current = atomic.Read();
 		while (true)
@@ -148,10 +149,10 @@ public static class AtomicExtensions
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
 
-		if (typeof(T) == typeof(Int32)) return Reinterpret<Int32, T>(((Atomic<Int32>)(Object)atomic).Increment());
-		if (typeof(T) == typeof(Int64)) return Reinterpret<Int64, T>(((Atomic<Int64>)(Object)atomic).Increment());
-		if (typeof(T) == typeof(UInt32)) return Reinterpret<UInt32, T>(((Atomic<UInt32>)(Object)atomic).Increment());
-		if (typeof(T) == typeof(UInt64)) return Reinterpret<UInt64, T>(((Atomic<UInt64>)(Object)atomic).Increment());
+		if (typeof(T) == typeof(Int32)) return (T)(Object)((Atomic<Int32>)(Object)atomic).Increment();
+		if (typeof(T) == typeof(Int64)) return (T)(Object)((Atomic<Int64>)(Object)atomic).Increment();
+		if (typeof(T) == typeof(UInt32)) return (T)(Object)((Atomic<UInt32>)(Object)atomic).Increment();
+		if (typeof(T) == typeof(UInt64)) return (T)(Object)((Atomic<UInt64>)(Object)atomic).Increment();
 
 		var current = atomic.Read();
 		while (true)
@@ -174,10 +175,10 @@ public static class AtomicExtensions
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
 
-		if (typeof(T) == typeof(Int32)) return Reinterpret<Int32, T>(((Atomic<Int32>)(Object)atomic).Decrement());
-		if (typeof(T) == typeof(Int64)) return Reinterpret<Int64, T>(((Atomic<Int64>)(Object)atomic).Decrement());
-		if (typeof(T) == typeof(UInt32)) return Reinterpret<UInt32, T>(((Atomic<UInt32>)(Object)atomic).Decrement());
-		if (typeof(T) == typeof(UInt64)) return Reinterpret<UInt64, T>(((Atomic<UInt64>)(Object)atomic).Decrement());
+		if (typeof(T) == typeof(Int32)) return (T)(Object)((Atomic<Int32>)(Object)atomic).Decrement();
+		if (typeof(T) == typeof(Int64)) return (T)(Object)((Atomic<Int64>)(Object)atomic).Decrement();
+		if (typeof(T) == typeof(UInt32)) return (T)(Object)((Atomic<UInt32>)(Object)atomic).Decrement();
+		if (typeof(T) == typeof(UInt64)) return (T)(Object)((Atomic<UInt64>)(Object)atomic).Decrement();
 
 		var current = atomic.Read();
 		while (true)
@@ -201,10 +202,10 @@ public static class AtomicExtensions
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
 
-		if (typeof(T) == typeof(Int32)) return Reinterpret<Int32, T>(((Atomic<Int32>)(Object)atomic).And(Reinterpret<T, Int32>(value)));
-		if (typeof(T) == typeof(Int64)) return Reinterpret<Int64, T>(((Atomic<Int64>)(Object)atomic).And(Reinterpret<T, Int64>(value)));
-		if (typeof(T) == typeof(UInt32)) return Reinterpret<UInt32, T>(((Atomic<UInt32>)(Object)atomic).And(Reinterpret<T, UInt32>(value)));
-		if (typeof(T) == typeof(UInt64)) return Reinterpret<UInt64, T>(((Atomic<UInt64>)(Object)atomic).And(Reinterpret<T, UInt64>(value)));
+		if (typeof(T) == typeof(Int32)) return (T)(Object)((Atomic<Int32>)(Object)atomic).And((Int32)(Object)value);
+		if (typeof(T) == typeof(Int64)) return (T)(Object)((Atomic<Int64>)(Object)atomic).And((Int64)(Object)value);
+		if (typeof(T) == typeof(UInt32)) return (T)(Object)((Atomic<UInt32>)(Object)atomic).And((UInt32)(Object)value);
+		if (typeof(T) == typeof(UInt64)) return (T)(Object)((Atomic<UInt64>)(Object)atomic).And((UInt64)(Object)value);
 
 		var current = atomic.Read();
 		while (true)
@@ -226,10 +227,10 @@ public static class AtomicExtensions
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
 
-		if (typeof(T) == typeof(Int32)) return Reinterpret<Int32, T>(((Atomic<Int32>)(Object)atomic).Or(Reinterpret<T, Int32>(value)));
-		if (typeof(T) == typeof(Int64)) return Reinterpret<Int64, T>(((Atomic<Int64>)(Object)atomic).Or(Reinterpret<T, Int64>(value)));
-		if (typeof(T) == typeof(UInt32)) return Reinterpret<UInt32, T>(((Atomic<UInt32>)(Object)atomic).Or(Reinterpret<T, UInt32>(value)));
-		if (typeof(T) == typeof(UInt64)) return Reinterpret<UInt64, T>(((Atomic<UInt64>)(Object)atomic).Or(Reinterpret<T, UInt64>(value)));
+		if (typeof(T) == typeof(Int32)) return (T)(Object)((Atomic<Int32>)(Object)atomic).Or((Int32)(Object)value);
+		if (typeof(T) == typeof(Int64)) return (T)(Object)((Atomic<Int64>)(Object)atomic).Or((Int64)(Object)value);
+		if (typeof(T) == typeof(UInt32)) return (T)(Object)((Atomic<UInt32>)(Object)atomic).Or((UInt32)(Object)value);
+		if (typeof(T) == typeof(UInt64)) return (T)(Object)((Atomic<UInt64>)(Object)atomic).Or((UInt64)(Object)value);
 
 		var current = atomic.Read();
 		while (true)
@@ -303,17 +304,4 @@ public static class AtomicExtensions
 			current = previous;
 		}
 	}
-
-	/// <summary>Reinterprets a value as the type it already is, which the compiler cannot be told.</summary>
-	/// <typeparam name="TFrom">The type the value is held as.</typeparam>
-	/// <typeparam name="TTo">The type it is being read as, which is the same type.</typeparam>
-	/// <param name="value">The value to reinterpret.</param>
-	/// <returns>The same value, typed the other way.</returns>
-	/// <remarks>
-	/// Only ever reached under a <c>typeof</c> test that has already established the two are the same
-	/// type. A cast would box; this compiles to nothing. The cell itself needs no such help — casting the
-	/// reference through <see cref="Object"/> under the same test folds away on its own.
-	/// </remarks>
-	[MethodImpl(MethodImplOptions.AggressiveInlining)]
-	private static TTo Reinterpret<TFrom, TTo>(TFrom value) => Unsafe.As<TFrom, TTo>(ref value);
 }
