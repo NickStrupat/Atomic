@@ -83,8 +83,13 @@ is the loop with nothing in front of it either. `Subtract` adds the negation, th
 interlocked subtract — one extra instruction, and it wraps correctly even for the value whose negation
 is itself an overflow.
 
-`Xor`, `Max`, `Min` and `Update` stay loops for every `T`: the runtime exposes no interlocked
-instruction for the first three, and the last takes a function.
+`Xor`, `Max`, `Min` and `Update` stay loops for every `T`. arm64 has a single instruction for the first
+three — `ldeoral`, `ldsmaxal`, `ldsminal` — and nothing reaches them from C#: `Interlocked` has
+no `Xor`, `Max` or `Min`, and `System.Runtime.Intrinsics.Arm` exposes no atomics at all, only
+`AdvSimd`, `ArmBase`, `Crc32`, `Dp`, `Rdm`, the crypto sets and `Sve`. The JIT emits those instructions
+solely when lowering `Interlocked`, which never asks for them. x86 would want the loop regardless,
+having no fetch-and-xor to speak of, and `Update` takes a function so it was never going to be one
+instruction.
 
 Specialising inside the method rather than declaring overloads on the concrete types is what makes this
 reach generic code. Overload resolution happens where the type is written down, and here it isn't:
