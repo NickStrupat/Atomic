@@ -12,7 +12,7 @@
 
     <PropertyGroup>
         <PackageId>NickStrupat.Atomic</PackageId>
-        <Version>1.0.0</Version>
+        <Version>0.1.0</Version>
         <Authors>Nick Strupat</Authors>
         <Copyright>Copyright © 2026 Nick Strupat</Copyright>
         <Description>A generic atomic cell for .NET. Lock-free and allocation-free for references and for any unmanaged value up to a machine word, including the three, five, six and seven byte structs that no interlocked instruction matches. Values too wide to swap in place fall back to a monitor, and Atomic&lt;T&gt;.IsLockFree reports which one you got.</Description>
