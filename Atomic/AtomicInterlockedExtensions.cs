@@ -11,9 +11,10 @@ namespace NickStrupat;
 /// </para>
 /// <para>
 /// Both sets are declared against <see cref="Atomic{T}"/>, and these take precedence because a closed
-/// type beats an open one. A caller gets the instruction without asking; naming
-/// <see cref="AtomicExtensions"/> explicitly reaches past these to the loop, which is correct either
-/// way — only slower, and only when contended.
+/// type beats an open one. That precedence no longer decides anything: since
+/// <see cref="AtomicExtensions"/> began testing <c>typeof(T)</c> and folding the result, reaching past
+/// these to the open method arrives at the same instruction. What is left is that these say so in the
+/// signature rather than leaving it to the JIT, and that they need no operator constraint.
 /// </para>
 /// <para>
 /// A four byte instruction here acts on the same address as the cell's own eight byte view of its

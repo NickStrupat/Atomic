@@ -1,3 +1,4 @@
+using System.Numerics;
 using AwesomeAssertions;
 using NickStrupat;
 
@@ -99,17 +100,81 @@ public class NativeInterlockedTests
 	[Fact]
 	public void TheInstructionAndTheLoopAgree()
 	{
-		// Called normally, the closed overload in AtomicInterlockedExtensions wins and this is the
-		// instruction. Naming AtomicExtensions reaches past it to the open one, which is the loop. Both
-		// are in scope for the same receiver, and they are meant to be indistinguishable.
+		// Both spellings reach the instruction now. The closed overload here wins overload resolution,
+		// and naming AtomicExtensions reaches the open one, which specialises to the same call once the
+		// JIT knows the type. So the loop they have to agree with is written out below, because the
+		// library no longer offers a way to ask for it.
 		var byInstruction = new Atomic<Int32>(10);
 		var byLoop = new Atomic<Int32>(10);
 
-		byInstruction.Increment().Should().Be(AtomicExtensions.Increment(byLoop));
-		byInstruction.Add(5).Should().Be(AtomicExtensions.Add(byLoop, 5));
-		byInstruction.Or(0b1010).Should().Be(AtomicExtensions.Or(byLoop, 0b1010));
-		byInstruction.And(0b0110).Should().Be(AtomicExtensions.And(byLoop, 0b0110));
+		byInstruction.Increment().Should().Be(Loop(byLoop, current => current + 1));
+		byInstruction.Add(5).Should().Be(Loop(byLoop, current => current + 5));
+		byInstruction.Or(0b1010).Should().Be(Loop(byLoop, current => current | 0b1010, returnsOld: true));
+		byInstruction.And(0b0110).Should().Be(Loop(byLoop, current => current & 0b0110, returnsOld: true));
 		byInstruction.Read().Should().Be(byLoop.Read());
+	}
+
+	[Fact]
+	public void WhenTheCallerIsGeneric_TheInstructionIsStillWhatRuns()
+	{
+		// Overload resolution happens where the type is written down, so generic code cannot reach the
+		// closed overloads at all — before AtomicExtensions specialised, this was a compare-and-exchange
+		// loop no matter what T turned out to be. Only the results are checked here; that the code
+		// generated is the bare instruction is a fact about codegen, not something a test can observe.
+		Generic.Increment(new Atomic<Int32>(10)).Should().Be(11);
+		Generic.Increment(new Atomic<Int64>(10L)).Should().Be(11L);
+		Generic.Increment(new Atomic<UInt32>(10U)).Should().Be(11U);
+		Generic.Increment(new Atomic<UInt64>(10UL)).Should().Be(11UL);
+
+		// A type with no instruction takes the loop, through the same call.
+		Generic.Increment(new Atomic<Decimal>(10m)).Should().Be(11m);
+		Generic.Increment(new Atomic<Int16>(10)).Should().Be(11);
+
+		Generic.Add(new Atomic<Int32>(10), 5).Should().Be(15);
+		Generic.Add(new Atomic<UInt64>(UInt64.MaxValue), 2UL).Should().Be(1UL);
+		Generic.Add(new Atomic<Decimal>(10m), 5m).Should().Be(15m);
+	}
+
+	[Fact]
+	public void WhenTheCallerIsGeneric_TheRestOfTheWordIsStillLeftAlone()
+	{
+		// The specialisation hands a four byte instruction a reference into an eight byte field, the same
+		// as the closed overload does. An overflow carrying into the bytes the cell keeps zeroed would
+		// read back correctly and fail every later comparison.
+		var atomic = new Atomic<Int32>(Int32.MaxValue);
+
+		Generic.Increment(atomic).Should().Be(Int32.MinValue);
+		atomic.TryCompareExchange(7, Int32.MinValue, out _).Should().BeTrue();
+		atomic.Read().Should().Be(7);
+	}
+
+	/// <summary>Applies <paramref name="update"/> with a compare-and-exchange loop written out by hand.</summary>
+	/// <param name="atomic">The cell to update.</param>
+	/// <param name="update">Produces the new value from the current one.</param>
+	/// <param name="returnsOld">Whether to return the value replaced rather than the one stored.</param>
+	/// <returns>The new value, or the old one when <paramref name="returnsOld"/> is set.</returns>
+	private static Int32 Loop(Atomic<Int32> atomic, Func<Int32, Int32> update, Boolean returnsOld = false)
+	{
+		var current = atomic.Read();
+		while (true)
+		{
+			var next = update(current);
+			if (atomic.TryCompareExchange(next, current, out var previous))
+				return returnsOld ? current : next;
+			current = previous;
+		}
+	}
+
+	/// <summary>
+	/// Calls the extensions from code where <c>T</c> is still a type parameter, which is the only place
+	/// the specialisation is what decides anything.
+	/// </summary>
+	private static class Generic
+	{
+		public static T Increment<T>(Atomic<T> atomic) where T : IIncrementOperators<T> => atomic.Increment();
+
+		public static T Add<T>(Atomic<T> atomic, T addend) where T : IAdditionOperators<T, T, T> =>
+			atomic.Add(addend);
 	}
 
 	[Fact]

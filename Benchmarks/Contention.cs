@@ -81,7 +81,35 @@ public static class Contention
 		Console.WriteLine($"{"driver",-40} {"Mops/s",10}");
 		Console.WriteLine($"{"Interlocked.Increment on a field",-40} {Drive(field.IncrementBatch),10:F1}");
 		Console.WriteLine($"{"Atomic<Int64>.Increment (instruction)",-40} {Drive(() => { for (var i = 0; i < Batch; i++) atomic.Increment(); }),10:F1}");
-		Console.WriteLine($"{"Atomic<Int64>.Increment (loop)",-40} {Drive(() => { for (var i = 0; i < Batch; i++) AtomicExtensions.Increment(atomic); }),10:F1}");
+		Console.WriteLine($"{"Atomic<Int64>.Increment (loop)",-40} {Drive(() => { for (var i = 0; i < Batch; i++) IncrementByLoop(atomic); }),10:F1}");
+		Console.WriteLine($"{"Atomic<T>.Increment from generic code",-40} {Drive(() => { for (var i = 0; i < Batch; i++) IncrementGenerically(atomic); }),10:F1}");
+	}
+
+	/// <summary>Increments from a callsite where the type is still a parameter.</summary>
+	/// <typeparam name="T">The type of the value held by the cell.</typeparam>
+	/// <param name="atomic">The cell to increment.</param>
+	/// <remarks>
+	/// The closed overload cannot be chosen here, so this row is the one the specialisation in
+	/// <see cref="AtomicExtensions"/> exists for. It used to run at the speed of the loop.
+	/// </remarks>
+	private static void IncrementGenerically<T>(Atomic<T> atomic)
+	where T : System.Numerics.IIncrementOperators<T> => atomic.Increment();
+
+	/// <summary>Increments by compare-and-exchange, which the library no longer does for this type.</summary>
+	/// <param name="atomic">The cell to increment.</param>
+	/// <remarks>
+	/// The row above and this one are the whole point of the comparison, and naming
+	/// <c>AtomicExtensions</c> stopped telling them apart once it began specialising on the type.
+	/// </remarks>
+	private static void IncrementByLoop(Atomic<Int64> atomic)
+	{
+		var current = atomic.Read();
+		while (true)
+		{
+			if (atomic.TryCompareExchange(current + 1, current, out var previous))
+				return;
+			current = previous;
+		}
 	}
 
 	/// <summary>Runs a batch of operations on every thread until the time is up.</summary>

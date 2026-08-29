@@ -32,7 +32,27 @@ public class ReadModifyWriteBenchmarks
 	public void Atomic_Increment_Instruction() { for (var i = 0; i < Operations; i++) atomic.Increment(); }
 
 	[Benchmark(OperationsPerInvoke = Operations)]
-	public void Atomic_Increment_Loop() { for (var i = 0; i < Operations; i++) AtomicExtensions.Increment(atomic); }
+	public void Atomic_Increment_Loop() { for (var i = 0; i < Operations; i++) IncrementByLoop(atomic); }
+
+	/// <summary>Increments by compare-and-exchange, which the library no longer does for this type.</summary>
+	/// <param name="atomic">The cell to increment.</param>
+	/// <returns>The new value.</returns>
+	/// <remarks>
+	/// Written out here because naming <c>AtomicExtensions</c> no longer reaches a loop: it specialises
+	/// to the same instruction the row above measures, and the two rows would have been one benchmark
+	/// run twice.
+	/// </remarks>
+	private static Int64 IncrementByLoop(Atomic<Int64> atomic)
+	{
+		var current = atomic.Read();
+		while (true)
+		{
+			var next = current + 1;
+			if (atomic.TryCompareExchange(next, current, out var previous))
+				return next;
+			current = previous;
+		}
+	}
 
 	[Benchmark(OperationsPerInvoke = Operations)]
 	public void Atomic_Decimal_Add() { for (var i = 0; i < Operations; i++) wide.Add(1m); }

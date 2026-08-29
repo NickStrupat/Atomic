@@ -76,13 +76,30 @@ history.Update(entry, static (e, current) => current.Add(e));
 ```
 
 For `Atomic<Int32>`, `Atomic<Int64>`, `Atomic<UInt32>` and `Atomic<UInt64>`, `Increment`, `Decrement`,
-`Add`, `And` and `Or` resolve instead to overloads that issue the instruction directly with no loop.
-Being declared on the concrete type, they win overload resolution automatically — you don't opt in.
+`Add`, `And` and `Or` issue the instruction directly with no loop. You don't opt in, and it doesn't
+matter how the call is spelled: closed overloads on the concrete types win overload resolution, and the
+open generic tests `typeof(T)` and specialises to the same instruction. The JIT folds that test when it
+specialises the method, so `Atomic<Int64>.Increment` is one `ldaddal` with nothing in front of it and
+`Atomic<Decimal>.Increment` is the loop with nothing in front of it either.
 
-Uncontended this makes no difference, because an uncontended loop succeeds on its first try — 6.96 ns
-against 7.07. Under contention it does: four threads incrementing one `Atomic<Int64>` sustain roughly
-25 Mops through the instruction against roughly 10 through the loop, because every failed comparison
-costs another cache line migration.
+Both paths are needed, because overload resolution can only reach the closed method where the type is
+written down. Generic code cannot reach it at all:
+
+```csharp
+static void Bump<T>(Atomic<T> cell) where T : IIncrementOperators<T> => cell.Increment();
+```
+
+Uncontended none of this is measurable, since an uncontended loop succeeds on its first try — 6.91 ns
+against 7.01. Contended it is the whole difference. Four threads incrementing one cell:
+
+```
+Interlocked.Increment on a plain field   30.8 Mops/s
+Atomic<Int64>.Increment                  31.1
+Atomic<T>.Increment from generic code    30.6
+the same, by compare-and-exchange loop   10.0
+```
+
+Every failed comparison costs another cache line migration, which is what the bottom row is.
 
 ## What "atomic" guarantees here
 
@@ -191,9 +208,9 @@ instructions. The categories that separate them are the ones nothing can swap in
   makes: it allocates nothing, ever, and pays a monitor for the values that do not fit its one field.
 
 ```
-Interlocked.Increment on a plain field    6.907 ns
-Atomic<Int64>.Increment                   6.960 ns
-Atomic<Int64>.Increment (via the loop)    7.066 ns
+Interlocked.Increment on a plain field    7.120 ns
+Atomic<Int64>.Increment                   6.914 ns
+the same, by compare-and-exchange loop    7.006 ns
 ```
 
 The abstraction is free where it can be. `Benchmarks/` also holds a contended harness
