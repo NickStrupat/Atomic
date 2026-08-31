@@ -119,8 +119,8 @@ failing every attempt in a row is the different claim worth failing the build on
 
 Follows the global .NET guidelines with two deliberate divergences, so do not "fix" them:
 
-- **Tabs, not 4 spaces.** Every file except `CodegenProbe/Program.cs`, which is 4-space and the odd one
-  out.
+- **Tabs, not 4 spaces**, in every `.cs` file. (Project files are 4-space, as the SDK templates write
+  them.)
 - Lines run to ~110 in the library. `SeqLockAtomic`'s dense `switch` cases run to 227 and stay that
   way — pre-existing, deliberate, and in a candidate rather than the package.
 
