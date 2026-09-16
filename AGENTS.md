@@ -27,22 +27,43 @@ dotnet run -c Release --project Benchmarks -- contention
 dotnet run -c Release --project Benchmarks -- gc
 ```
 
-Release is 118 tests; Debug is 114 + 4 skipped. Zero warnings is the standing state — keep it, because
+Release is 131 tests; Debug is 127 + 4 skipped. Zero warnings is the standing state — keep it, because
 `GenerateDocumentationFile` is on and it is what catches a `cref` to something you just deleted.
 
 ## Invariants
 
 **`Atomic<T>` declares exactly one field.** A second field lets the runtime seat it first, which pushes
 `storage` off a word boundary and raises `DataMisalignedException` on arm64, and takes away the slack
-that lets a 3-byte value be widened to 8. This is why the lock is on the instance (a private lock
+that lets a 3-byte value be widened to a word. This is why the lock is on the instance (a private lock
 object would be that second field) and why the alignment claim is asserted by a test taking the
 address, not by a runtime check. `StorageTests` holds the line; do not add a field to make something
 convenient.
 
-**Every strategy term must fold to a constant.** `IsInline` / `IsReference` are built only from
-`typeof(T)`, `RuntimeHelpers.IsReferenceOrContainsReferences<T>()`, `Unsafe.SizeOf<T>()` and
-`IntPtr.Size`. One term NativeAOT cannot evaluate keeps the monitor path live, drags a `try`/`finally`
-in, and pushes the method past the inlining budget. `CodegenTests` is the only test that would notice.
+**Every strategy term must fold to a constant.** `IsWord` / `IsWideInteger` / `IsReference` — and
+`IsInline`, which is the first two — are built only from `typeof(T)`,
+`RuntimeHelpers.IsReferenceOrContainsReferences<T>()`, `Unsafe.SizeOf<T>()` and `IntPtr.Size`. One term
+NativeAOT cannot evaluate keeps the monitor path live, drags a `try`/`finally` in, and pushes the method
+past the inlining budget. `CodegenTests` is the only test that would notice.
+
+**The widened view is a word, and the word is `IntPtr.Size`.** Not eight bytes — a word is what the
+field's alignment and the object's minimum size are both stated in, so writing it this way is what makes
+the trick hold at 32 bits instead of surrendering every value type to the monitor there. `Widen<TView>` /
+`Narrow<TView>` are generic over the view for this: `IntPtr` for `IsWord`, `Int64` for `IsWideInteger`.
+The caller owes them a view at least as wide as `T`, which both terms establish before reaching them —
+`Widen` writes `sizeof(T)` bytes into it and will run off the end of a narrower one.
+
+**`Int64` and `UInt64` are named, not measured, on the wide path.** `IsWideInteger` is those two types by
+name and a 32-bit runtime, and it may not be loosened to "eight unmanaged bytes". Three separate things
+would break: the runtime seats a field of *these* types on an 8-byte boundary for the instructions that
+reach it and promises nothing of the sort for `Eight` (two `Int32`s); the view has to be the value exactly,
+there being no slack to zero at that width; and the path has no `TryCompareExchangeEqualValue` tail, which
+is only sound because an integer's equality is its bits. `Double` fails the third and is on the monitor at
+32 bits for that reason, not for its size.
+
+**On the wide path, `Volatile` is not good enough.** ECMA-335 I.12.6.6 grants atomicity only up to a
+native int, so an 8-byte `Volatile.Read` or `Volatile.Write` can tear on a 32-bit runtime. `Read` is
+`Interlocked.Read` and `Write` is `Interlocked.Exchange` there — full fences rather than acquire/release,
+which is stronger than the README promises and so breaks nothing, but is not free.
 
 **The specialisation idiom is one idiom.** Under a `typeof(T) == typeof(Int32)` guard, cast the cell
 `((Atomic<Int32>)(Object)atomic).Storage` and the values `(T)(Object)x`. The reference cast folds to
@@ -54,6 +75,26 @@ better and they make two spellings of one thing. `NativeInterlockedTests` assert
 `Int32`/`Int64`/`UInt32`/`UInt64`. `Subtract` adds the negation (`unchecked(-x)`, `unchecked(0U - x)`).
 `Xor`, `Max`, `Min` and `Update` stay compare-exchange loops — see below.
 
+**A specialisation is gated on the cell's own strategy, not just on `typeof(T)`.** Each of the six asks
+`Atomic<T>.IsInline` before issuing the instruction, which is why that property is `internal` rather than
+`private`. `typeof(T) == typeof(Int32)` alone was a bug: where the cell keeps a value behind its monitor,
+an unguarded `Interlocked.Increment` is a second writer the monitor knows nothing about, and a
+`CompareExchange` can read, compare and store across an increment and lose it. Naming the cell's strategy
+rather than restating the word size is what makes the gate survive a change to the strategy — it already
+has: all four types keep their instruction at 32 bits, `Int32`/`UInt32` through the word and
+`Int64`/`UInt64` through the wide path, and the gate needed no edit to say so. No test can catch the
+original bug on a 64-bit machine, where the term folds to true and nothing changes; what the codegen tests
+hold is the other half, that the gate is free — `Increment[long]` asserts `casal` is *absent*, and a term
+that failed to fold would leave the loop's compare-and-swap in the body.
+
+**A comparand is compared by what `T` is, never by how wide it is.** A reference by identity, a value
+type with `EqualityComparer<T>.Default` at every width. The inline path still issues its one `casal`
+first and only consults the type when that misses, which is sound because identical bits are the same
+value and `Equals` is required to be reflexive — a bits-match is an `Equals`-match for anything honouring
+that. The tail is `NoInlining` on purpose: `TryCompareExchange` has to stay small enough to inline into
+the loops in `AtomicExtensions`, and `CodegenTests` asserting `Increment[System.Decimal]` contains
+`Monitor` is what would notice if it stopped.
+
 **Return values follow `Interlocked`, inconsistencies included.** `Add`/`Increment`/`Decrement` return
 the new value; `And`/`Or`/`Xor` return the old one.
 
@@ -63,6 +104,17 @@ the new value; `And`/`Or`/`Xor` return the old one.
   `ldsminal`; neither `Interlocked` nor `System.Runtime.Intrinsics.Arm` exposes them. Checked by
   reflecting over the intrinsics namespaces (including nested `+Arm64` classes — `IsPublic` is false
   for those, use `IsNestedPublic`). Recorded in `3efda5d`.
+- **Value types compare with their own equality, not with their bits.** Settled with the repo owner
+  against the alternative (bits everywhere, as `std::atomic` does). Bits would have been free, but it
+  makes `Atomic<Decimal>` say `1.0m != 1.00m`, never calls a type's `Equals`, makes padding observable,
+  and bit-comparing a struct holding references races with a moving GC. The old rule was width-picked
+  and indefensible: `Eight` and `Twelve` are the same `record struct` and compared differently, and an
+  eight-byte type with interior padding could fail a compare-exchange forever. `Tolerance`/
+  `WideTolerance` in `Tests/TestTypes.cs` hold the two strategies to one answer.
+- **A struct holding references keeps its own `Equals`, references and all.** `Tagged(Int32, String)`
+  goes on comparing its `String` by value. "Identity and nothing else" governs `Atomic<SomeClass>`; once
+  `T` is a struct the struct decides, and there is no way to overrule it from here. Documented rather
+  than closed.
 - **`Atomic<T>` stays a class.** Wrapping a reference in a struct to stop callers `lock`ing the
   instance was evaluated and rejected: it makes `default(Atomic<T>)` a null-dereference waiting to
   happen, and copies of a struct silently share one cell.
@@ -104,6 +156,14 @@ failing every attempt in a row is the different claim worth failing the build on
   categories where all three implementations emit the same instruction are the control: they have to
   agree.
 - **BDN microbenchmarks measure the sink too.** A `sum +=` on a `Decimal` was most of one figure.
+- **Comparing by value costs the awkward sizes about 0.8 ns on `CompareExchange`, and nothing else.**
+  Measured against HEAD before the change in a worktree, not against the numbers already in the README:
+  the machine was loaded on the first attempt and the unmodified `String` column read 3x high, which is
+  the control that said so. `Int64`, `String`, `Decimal` and `Tagged` did not move. The cost is the
+  second exit the miss needs, landing beside the store-to-load stall `Three` already pays; the success
+  path is two instructions shorter than it was and the `casal` is untouched. Read in the disassembly
+  rather than guessed at, and assigning the comparand versus narrowing the result makes no difference
+  (7.39 against 7.56), so there is nothing to win back by rearranging that line.
 - `Atomic<Three>`'s write cost is a store-to-load-forwarding stall (narrow stores, wide load), not
   anything about the strategy. The read path forwards cleanly.
 - **`BoxAtomic`'s write advantage reverses once GC pause is charged.** Gen0 is stop-the-world for every

@@ -17,8 +17,8 @@ namespace NickStrupat;
 /// <list type="bullet">
 /// <item><description><see cref="Read"/> and <see cref="Write"/> are atomic and never tear.</description></item>
 /// <item><description>
-/// <see cref="CompareExchange"/> compares a reference by identity, a value type held in a machine
-/// word by its bits, and any other value type with <see cref="EqualityComparer{T}.Default"/>.
+/// <see cref="CompareExchange"/> compares a reference by identity and a value type with
+/// <see cref="EqualityComparer{T}.Default"/>, whatever its width and wherever the cell keeps it.
 /// </description></item>
 /// </list>
 /// </para>
@@ -57,9 +57,10 @@ public interface IAtomic<T>
 	/// <returns><see langword="true"/> when the value was stored, otherwise <see langword="false"/>.</returns>
 	/// <remarks>
 	/// A loop retrying a failed exchange cannot tell the two apart from <paramref name="previous"/>
-	/// alone: the comparison a cell applies depends on where it keeps the value, and a caller comparing
-	/// the returned value itself will read <c>-0.0</c> as equal to <c>0.0</c> where a cell comparing bits
-	/// did not, and drop an update believing it landed.
+	/// alone. The cell compares with <see cref="EqualityComparer{T}.Default"/> and a caller reaching for
+	/// <c>==</c> does not: a cell holding <see cref="Double.NaN"/> stores over it when handed a
+	/// <see cref="Double.NaN"/> comparand, and a caller judging that by the value it got back reads the
+	/// swap it just made as a failure, retries, and stores twice.
 	/// </remarks>
 	Boolean TryCompareExchange(T value, T comparand, out T previous);
 }

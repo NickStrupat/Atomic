@@ -34,7 +34,19 @@ namespace Tests;
 public class CodegenTests
 {
 	/// <summary>The methods whose native code is wanted, as either compiler's filter spells them.</summary>
-	private const String Filter = "Probe* Increment";
+	private const String Filter = "Probe* Increment TryCompareExchange";
+
+	/// <summary>The compare-exchange the instruction covers, as either compiler names it.</summary>
+	/// <remarks>
+	/// The probe's wrapper is not the thing to read here: unlike <c>Read</c> and <c>Write</c>, this
+	/// method is not marked for inlining — the compare-exchange loops in <see cref="AtomicExtensions"/>
+	/// are what it has to fit inside, not a caller's frame — so it is compiled under its own name and
+	/// the wrapper holds nothing but a call to it. The wrapper's job is only to get it compiled.
+	/// </remarks>
+	private const String WordCompareExchange = "[long]:TryCompareExchange";
+
+	/// <summary>The compare-exchange that has to take the monitor, for the same reason.</summary>
+	private const String WideCompareExchange = "[System.Decimal]:TryCompareExchange";
 
 	private static readonly Lazy<Listing> JustInTime = new(RunTheProbe);
 	private static readonly Lazy<Listing> AheadOfTime = new(CompileTheProbeAheadOfTime);
@@ -70,9 +82,15 @@ public class CodegenTests
 		Body(methods, "ProbeReadReference").Should().NotContain("Monitor");
 		Calls(Body(methods, "ProbeReadReference")).Should().BeEmpty();
 
-		// And the case that must look different, without which the three above would prove only that
-		// this is reading the wrong thing.
+		// Nor does a compare-exchange on a word. Its calls are not asserted empty: the tail that consults
+		// the type's own equality is out of line, so a call to it sits in the body whether or not any
+		// execution reaches it. What matters is that the monitor is gone.
+		Body(methods, WordCompareExchange).Should().NotContain("Monitor");
+
+		// And the cases that must look different, without which those above would prove only that this
+		// is reading the wrong thing.
 		Body(methods, "ProbeReadWide").Should().Contain("Monitor");
+		Body(methods, WideCompareExchange).Should().Contain("Monitor");
 	}
 
 	/// <summary>Requires that the type test picked the instruction and left no loop behind.</summary>
@@ -94,7 +112,39 @@ public class CodegenTests
 		var wide = Body(methods, "AtomicExtensions:Increment[System.Decimal]");
 		wide.Should().NotContain("ldaddal");
 		wide.Should().Contain("Monitor");
+
+		// A compare-exchange on a word is the instruction with nothing in front of it. The cell compares
+		// with the type's own equality, and that costs the ordinary case nothing, because the type is
+		// only consulted from a tail the instruction branches to when it misses. So the compare-and-swap
+		// comes before the first branch in the body: nothing is read, compared or tested ahead of it.
+		// Written the other way round — ask the type, then swap — this is the assertion that fails.
+		var swap = Body(methods, WordCompareExchange);
+		swap.Should().Contain("casal");
+
+		var branches = Branches(swap);
+		branches.Should().NotBeEmpty("a body that branches nowhere would satisfy the next line for free");
+		swap.IndexOf("casal", StringComparison.Ordinal).Should()
+			.BeLessThan(swap.IndexOf(branches[0], StringComparison.Ordinal),
+				"the instruction runs before the type is ever consulted");
+
+		// And a value the instruction cannot hold reaches the same method through the same source.
+		Body(methods, WideCompareExchange).Should().NotContain("casal");
 	}
+
+	/// <summary>Every line that leaves the straight path, in the order they appear.</summary>
+	/// <param name="body">The lines of a method's listing.</param>
+	/// <returns>Each branch, conditional or not, including the ones that call and tail-call.</returns>
+	/// <remarks>
+	/// Spelled out rather than matched loosely, because arm64 has arithmetic whose mnemonics start with
+	/// the same letters — <c>bic</c>, <c>bfi</c> — and counting one of those as a branch would make the
+	/// assertion that reads this quietly weaker. arm64 only: the caller is already gated on it.
+	/// </remarks>
+	private static String[] Branches(String body) =>
+		Regex.Matches(body,
+				@"^\s+(?:beq|bne|blt|bgt|ble|bge|bhi|bls|bcs|bcc|bmi|bpl|bvs|bvc|bal|cbn?z|tbn?z|blr|bl|br|b)\s+\S.*$",
+				RegexOptions.Multiline)
+			.Select(m => m.Value.Trim())
+			.ToArray();
 
 	/// <summary>The methods a compiler disassembled, or a skip saying why there are none.</summary>
 	/// <param name="listing">The run to take them from.</param>

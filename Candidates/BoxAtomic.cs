@@ -95,8 +95,25 @@ public sealed class BoxAtomic<T> : IAtomic<T>
 		{
 			var comparandBits = ToBits(comparand);
 			var previousBits = Interlocked.CompareExchange(ref unmanaged, ToBits(value), comparandBits);
-			previous = FromBits(previousBits);
-			return previousBits == comparandBits;
+			if (previousBits == comparandBits)
+			{
+				previous = comparand;
+				return true;
+			}
+
+			// Bits differing is not the same as values differing, so the type is asked and the exchange
+			// retried against what was actually seen. The same reasoning as Atomic<T>, which carries it.
+			var valueBits = ToBits(value);
+			while (true)
+			{
+				previous = FromBits(previousBits);
+				if (!EqualityComparer<T>.Default.Equals(previous, comparand))
+					return false;
+				var seenBits = Interlocked.CompareExchange(ref unmanaged, valueBits, previousBits);
+				if (seenBits == previousBits)
+					return true;
+				previousBits = seenBits;
+			}
 		}
 
 		if (IsReference)

@@ -18,16 +18,26 @@ public class StorageTests
 	[Fact]
 	public void Atomic_TakesALockOnlyForValuesItCannotSwapInPlace()
 	{
+		// What fits the word is the word's business, so half of these are stated against its width.
+		var wordIsEightBytes = IntPtr.Size == sizeof(Int64);
+
 		Atomic<Int32>.IsLockFree.Should().BeTrue();
-		Atomic<Int64>.IsLockFree.Should().BeTrue();
-		Atomic<Double>.IsLockFree.Should().BeTrue();
 		Atomic<Colour>.IsLockFree.Should().BeTrue();
 		Atomic<String>.IsLockFree.Should().BeTrue();
 
-		// A nullable reference is still just a reference, and Nullable<Int32> is eight unmanaged bytes,
-		// so neither needs the monitor. Both only compile since T stopped requiring notnull.
+		// The eight byte integers are swapped in place at either width — through the word at sixty four
+		// bits, through Interlocked at thirty two, where the runtime seats a field of one of these two
+		// types for the instructions that reach it. Double is the same size and is not offered that,
+		// because its equality is not its bits and the wide path has no tail to reconcile a miss with.
+		Atomic<Int64>.IsLockFree.Should().BeTrue();
+		Atomic<UInt64>.IsLockFree.Should().BeTrue();
+		Atomic<Double>.IsLockFree.Should().Be(wordIsEightBytes);
+
+		// A nullable reference is still just a reference, so it never needs the monitor. Nullable<Int32>
+		// is eight unmanaged bytes, so it fits the word only at sixty four bits. Both only compile since
+		// T stopped requiring notnull.
 		Atomic<String?>.IsLockFree.Should().BeTrue();
-		Atomic<Int32?>.IsLockFree.Should().BeTrue();
+		Atomic<Int32?>.IsLockFree.Should().Be(wordIsEightBytes);
 
 		Atomic<Twelve>.IsLockFree.Should().BeFalse();
 		Atomic<Guid>.IsLockFree.Should().BeFalse();
@@ -38,17 +48,22 @@ public class StorageTests
 	[Fact]
 	public void Atomic_WhenValueIsAnAwkwardSizeOrAlignment_StillSwapsInPlace()
 	{
-		// A lone field begins on a word boundary, and the minimum size of an object leaves a whole word
-		// there, so a value of a size no instruction matches is widened to eight bytes rather than locked.
-		Atomic<Three>.IsLockFree.Should().BeTrue();
-		Atomic<Five>.IsLockFree.Should().BeTrue();
-		Atomic<Six>.IsLockFree.Should().BeTrue();
-		Atomic<Seven>.IsLockFree.Should().BeTrue();
+		var wordIsEightBytes = IntPtr.Size == sizeof(Int64);
 
-		// Eight is two Int32 fields, so its own alignment is four. The field it sits in is word aligned
-		// regardless, which is what the instruction actually needs.
+		// A lone field begins on a word boundary, and the minimum size of an object leaves a whole word
+		// there, so a value of a size no instruction matches is widened to a word rather than locked. How
+		// many of these that covers is the width of the word: three bytes fit either one.
+		Atomic<Three>.IsLockFree.Should().BeTrue();
+		Atomic<Five>.IsLockFree.Should().Be(wordIsEightBytes);
+		Atomic<Six>.IsLockFree.Should().Be(wordIsEightBytes);
+		Atomic<Seven>.IsLockFree.Should().Be(wordIsEightBytes);
+
+		// Eight is two Int32 fields, so its own alignment is four. At sixty four bits the field it sits in
+		// is word aligned regardless, which is what the instruction actually needs. At thirty two nothing
+		// promises it an eight byte boundary — which is the case the wide path exists around, and why that
+		// path names Int64 and UInt64 rather than admitting everything of their size.
 		Unsafe.SizeOf<Eight>().Should().Be(sizeof(Int64));
-		Atomic<Eight>.IsLockFree.Should().BeTrue();
+		Atomic<Eight>.IsLockFree.Should().Be(wordIsEightBytes);
 	}
 
 	[Fact]
@@ -105,28 +120,37 @@ public class StorageTests
 		// type has no business carrying a method only a test calls. A runtime that seated the field
 		// differently would now fault rather than quietly slow down, and this is what would catch it.
 		//
-		// Only a sixty four bit runtime promises this. ECMA-335 I.12.6.2 aligns an eight byte value on the
-		// boundary a native int needs, so a thirty two bit runtime may seat it four bytes in — which is why
-		// Atomic<T> sends everything to the monitor there, and why there is nothing to assert.
-		if (IntPtr.Size != sizeof(Int64))
-			return;
-
-		FieldIsWordAligned<Byte>().Should().BeTrue();
-		FieldIsWordAligned<Int16>().Should().BeTrue();
-		FieldIsWordAligned<Int32>().Should().BeTrue();
-		FieldIsWordAligned<Int64>().Should().BeTrue();
-		FieldIsWordAligned<Double>().Should().BeTrue();
-		FieldIsWordAligned<Colour>().Should().BeTrue();
+		// The claim is about a word, which is what the widened view is, so it is the same claim at either
+		// width and runs at both. ECMA-335 I.12.6.2 aligns a value on the boundary a native int needs,
+		// which is exactly what this asks for.
+		FieldIsAlignedTo<Byte>(IntPtr.Size).Should().BeTrue();
+		FieldIsAlignedTo<Int16>(IntPtr.Size).Should().BeTrue();
+		FieldIsAlignedTo<Int32>(IntPtr.Size).Should().BeTrue();
+		FieldIsAlignedTo<Int64>(IntPtr.Size).Should().BeTrue();
+		FieldIsAlignedTo<Double>(IntPtr.Size).Should().BeTrue();
+		FieldIsAlignedTo<Colour>(IntPtr.Size).Should().BeTrue();
 
 		// The awkward sizes matter most: these are the ones with slack behind them.
-		FieldIsWordAligned<Three>().Should().BeTrue();
-		FieldIsWordAligned<Five>().Should().BeTrue();
-		FieldIsWordAligned<Six>().Should().BeTrue();
-		FieldIsWordAligned<Seven>().Should().BeTrue();
+		FieldIsAlignedTo<Three>(IntPtr.Size).Should().BeTrue();
+		FieldIsAlignedTo<Five>(IntPtr.Size).Should().BeTrue();
+		FieldIsAlignedTo<Six>(IntPtr.Size).Should().BeTrue();
+		FieldIsAlignedTo<Seven>(IntPtr.Size).Should().BeTrue();
 
 		// Eight bytes with an alignment of four, the case that faulted on arm64 when a second field
 		// pushed it off a word boundary.
-		FieldIsWordAligned<Eight>().Should().BeTrue();
+		FieldIsAlignedTo<Eight>(IntPtr.Size).Should().BeTrue();
+	}
+
+	[Fact]
+	public void Atomic_SeatsAnEightByteIntegerForTheInstructionsThatReachIt()
+	{
+		// At sixty four bits this is the word claim over again. At thirty two it is a different promise,
+		// and the only reason Int64 and UInt64 are swapped in place there at all: a field of either is
+		// seated on an eight byte boundary wherever the hardware's instructions demand it, which is what
+		// lets Interlocked be pointed at one. Nothing establishes that of an arbitrary eight byte value —
+		// Eight, one row up, is the counterexample — so the wide path names these two and stops.
+		FieldIsAlignedTo<Int64>(sizeof(Int64)).Should().BeTrue();
+		FieldIsAlignedTo<UInt64>(sizeof(Int64)).Should().BeTrue();
 	}
 
 	[Fact]
@@ -192,9 +216,14 @@ public class StorageTests
 	[InlineData(typeof(SeqLockAtomic<Int32>), 16)]
 	[InlineData(typeof(SeqLockAtomic<String>), 16)]
 	[InlineData(typeof(SeqLockAtomic<Decimal>), 24)]
-	public void TypeLayout_MatchesTheStrategy(Type type, Int32 expectedFieldBytes) =>
+	public void TypeLayout_MatchesTheStrategy(Type type, Int32 expectedFieldBytes)
+	{
+		if (IntPtr.Size != sizeof(Int64))
+			Assert.Skip("these sizes are written down for a sixty four bit runtime");
+
 		// The fields alone; the object header is another 16 bytes on top.
 		TypeLayout.GetLayout(type).Size.Should().Be(expectedFieldBytes);
+	}
 
 	[Fact]
 	public void Write_WhenValueFitsInAWord_AllocatesNothingInAnyImplementation()
@@ -257,19 +286,20 @@ public class StorageTests
 		bytes.Should().Be(Threads * (Int64)PerThread * BoxSize);
 	}
 
-	/// <summary>Checks that a cell's field really does begin on a word boundary.</summary>
+	/// <summary>Checks what boundary a cell's field really does begin on.</summary>
 	/// <typeparam name="T">The type of the value held by the cell.</typeparam>
-	/// <returns><see langword="true"/> when an eight byte view of the field would be aligned.</returns>
+	/// <param name="alignment">The boundary the field is expected to be seated on, in bytes.</param>
+	/// <returns><see langword="true"/> when a view of that width over the field would be aligned.</returns>
 	/// <remarks>
 	/// The alignment follows from <see cref="Atomic{T}"/> declaring a single field, so this asserts an
 	/// invariant rather than discovering a fact. A collection moving the cell is harmless: the offset of
 	/// the field within the object is fixed and every object begins on a word boundary, so the answer
 	/// does not depend on where it sits.
 	/// </remarks>
-	private static unsafe Boolean FieldIsWordAligned<T>() where T : unmanaged
+	private static unsafe Boolean FieldIsAlignedTo<T>(Int32 alignment) where T : unmanaged
 	{
 		var probe = new Atomic<T>(default);
-		return ((nint)Unsafe.AsPointer(ref probe.Storage) & (sizeof(Int64) - 1)) == 0;
+		return ((nint)Unsafe.AsPointer(ref probe.Storage) & (alignment - 1)) == 0;
 	}
 
 	private static Int64 MeasureWrites<T>(IAtomic<T> atomic, T value)

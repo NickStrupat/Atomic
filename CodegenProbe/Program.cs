@@ -28,6 +28,8 @@ file static class Probe
 			ProbeWriteWord(word, i);
 			sink += ProbeIncrementWord(word);
 			sink += (Int64)ProbeIncrementWide(wide);
+			sink += ProbeCompareExchangeWord(word, i) ? 1 : 0;
+			sink += ProbeCompareExchangeWide(wide, i) ? 1 : 0;
 		}
 
 		Console.WriteLine(sink);
@@ -50,4 +52,12 @@ file static class Probe
 
 	[MethodImpl(MethodImplOptions.NoInlining)]
 	public static Decimal ProbeIncrementWide(Atomic<Decimal> cell) => cell.Increment();
+
+	[MethodImpl(MethodImplOptions.NoInlining)]
+	public static Boolean ProbeCompareExchangeWord(Atomic<Int64> cell, Int64 value) =>
+		cell.TryCompareExchange(value, value, out _);
+
+	[MethodImpl(MethodImplOptions.NoInlining)]
+	public static Boolean ProbeCompareExchangeWide(Atomic<Decimal> cell, Int64 value) =>
+		cell.TryCompareExchange(value, value, out _);
 }

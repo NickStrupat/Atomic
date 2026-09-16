@@ -29,14 +29,19 @@ specialises the cell, so a given `Atomic<T>` compiles to one path with no test l
 | `T` | Strategy | Cell size |
 |---|---|---|
 | Any reference type | `Interlocked` on the reference, write barrier intact | 24 B |
-| Unmanaged, ≤ 8 bytes | `Interlocked` on an eight byte view of the field | 24 B |
-| Wider than a word | `lock (this)` | 32 B and up |
+| Unmanaged, ≤ one word | `Interlocked` on a word sized view of the field | 24 B |
+| `Int64` or `UInt64` past the word | `Interlocked` on the field, reads and writes included | 24 B |
+| Wider than that | `lock (this)` | 32 B and up |
 | A value type holding references | `lock (this)` | 32 B and up |
+
+This table is about storage and nothing else. It does not decide how a comparand is compared — that
+follows from `T` alone and does not change when a type crosses a row.
 
 ```csharp
 Atomic<Int32>.IsLockFree     // true
 Atomic<String>.IsLockFree    // true
-Atomic<Int32?>.IsLockFree    // true  — Nullable<Int32> is eight unmanaged bytes
+Atomic<Int64>.IsLockFree     // true  — at either word size, see 32-bit runtimes below
+Atomic<Int32?>.IsLockFree    // true on 64-bit — Nullable<Int32> is eight unmanaged bytes
 Atomic<Decimal>.IsLockFree   // false — 16 bytes, so the monitor
 ```
 
@@ -44,7 +49,7 @@ Atomic<Decimal>.IsLockFree   // false — 16 bytes, so the monitor
 
 No processor has a three byte compare-and-swap, so a three byte struct would normally need a lock. It
 doesn't here. Because `storage` is the only field the class declares, it begins on a word boundary and
-the minimum size of an object leaves a full eight bytes there — so the cell swaps the whole word and
+the minimum size of an object leaves a whole word there — so the cell swaps the whole word and
 lets the slack ride along. Writes zero the slack, so a given value always has the same bit pattern and
 `CompareExchange` compares something meaningful.
 
@@ -126,21 +131,42 @@ cell.Increment();              // atomic
 `Read` and `Write` are methods rather than a property for this reason — `cell.Value += 1` reads as one
 step and isn't.
 
-**Success cannot be inferred from the returned value, so ask.** The comparison a cell performs depends
-on `T`: identity for references, bits for a value in a word, `EqualityComparer<T>.Default` for anything
-wider. No caller-side comparison reproduces all three:
+**A comparand is compared by what `T` is, not by how wide it is.** A reference is compared by identity
+and by nothing else. A value type is compared with `EqualityComparer<T>.Default` — its `IEquatable<T>`
+implementation, or the one the compiler wrote for a `record struct` — whatever its width and whichever
+strategy the cell picked:
 
 ```csharp
-var cell = new Atomic<Double>(-0.0);
-var previous = cell.CompareExchange(99.0, comparand: 0.0);
-previous == 0.0          // true  — but nothing was stored, because the bits differ
-previous.Equals(0.0)     // true  — likewise wrong
+new Atomic<Double>(-0.0).CompareExchange(99.0, comparand: 0.0);    // stores: -0.0 equals 0.0
+new Atomic<Decimal>(1.0m).CompareExchange(99m, comparand: 1.00m);  // stores, and always did
 
-cell.TryCompareExchange(99.0, comparand: 0.0, out previous);   // false, correctly
+// A record struct that gains a field crosses to the monitor, and goes on comparing the same way.
 ```
 
-`Interlocked.CompareExchange(ref Double, …)` has the same trap and no way out of it. Use
-`TryCompareExchange` in any loop that branches on whether the swap happened.
+Where a cell keeps its value decides how it swaps it and nothing else. `Interlocked.CompareExchange(ref
+Double, …)` compares the bits and has no way out of it; that is the difference worth knowing about.
+
+A value type holding references is still a value type, so its own `Equals` decides — including how that
+treats the references inside it. `record struct Tagged(Int32 Number, String Text)` compares its `String`
+by value, because that is what the `Equals` the compiler wrote does. "Identity and nothing else" governs
+`Atomic<SomeClass>`; past that the struct decides, and there is no way to overrule it from here.
+
+**Success cannot be inferred from the returned value, so ask.** The cell compares with `Equals`, and a
+caller reaching for `==` does not:
+
+```csharp
+var cell = new Atomic<Double>(Double.NaN);
+var previous = cell.CompareExchange(99.0, comparand: Double.NaN);
+previous == Double.NaN   // false — and yet 99.0 was stored
+
+cell.TryCompareExchange(99.0, comparand: Double.NaN, out previous);   // true, correctly
+```
+
+Use `TryCompareExchange` in any loop that branches on whether the swap happened.
+
+**Comparing by value admits an ABA that comparing bits would not.** A swap can land across a change from
+`0.0` to `-0.0`, or across a change to a field the type's `Equals` ignores. That is what asking the type
+means; a cell cannot both honour `Equals` and notice changes `Equals` calls invisible.
 
 **Ordering is acquire/release, not sequential consistency.** Reads are acquire, writes are release,
 read-modify-writes are both. That is enough for publication across two cells:
@@ -150,6 +176,11 @@ read-modify-writes are both. That is enough for publication across two cells:
 data.Write(42);                 if (flag.Read())
 flag.Write(true);                   use(data.Read());   // sees 42
 ```
+
+One exception runs the other way: on a 32-bit runtime an `Int64` or `UInt64` read and write are full
+fences rather than acquire and release, because a locked compare-exchange is the only way to move eight
+bytes indivisibly there. That is stronger than what is promised, so nothing that relies on the promise
+notices, but it is not free — don't read the 64-bit numbers below as covering it.
 
 It is not enough for a store to one cell followed by a load of another — the StoreLoad case, which is
 unordered on x86 and arm64 alike. That needs a full fence, which `Interlocked.MemoryBarrier` provides,
@@ -189,12 +220,18 @@ The columns are categories of `T`, because the category is what picks a strategy
 
 | | `Int64` | `Three` | `String` | `Decimal` | `Tagged` |
 |---|---|---|---|---|---|
-| `Atomic` | 6.58 | 6.56 | 6.56 | 13.33 | 13.08 |
-| `BoxAtomic` | 6.80 | 6.57 | 6.63 | 12.63¹ | 13.72 |
-| `SeqLockAtomic` | 6.60 | **8.99** | 6.56 | **8.65** | 13.46 |
+| `Atomic` | 6.58 | 7.46² | 6.56 | 13.33 | 13.08 |
+| `BoxAtomic` | 6.80 | 7.34² | 6.63 | 12.63¹ | 13.72 |
+| `SeqLockAtomic` | 6.60 | **9.62**² | 6.56 | **8.65** | 13.46 |
 
 ¹ Allocates 32 bytes per operation. Nothing else in these tables allocates at all, and what those
 bytes actually cost is *Accounting for the allocations* below.
+
+² About 0.8 ns more than the same cell before comparands were compared by value rather than by bits —
+the only column that moved. A comparison the instruction cannot settle needs somewhere to go, and the
+second exit lands next to the store-to-load forward an awkward size already pays for (see *Awkward
+sizes*), where there is nothing to hide it behind. The instruction itself is untouched and the success
+path is two instructions shorter; the other four columns measure the same as they did.
 
 The 13 ns wherever a cell locks is the monitor and nothing else: an uncontended `lock` enter and exit
 on its own measures 13.45 ns, so copying the value costs nothing worth reporting beside it. The gap
@@ -276,10 +313,26 @@ wide categories outright for reading; what it loses is the claim to be the cheap
 
 ## Requirements and limits
 
-**64-bit for the lock-free path.** ECMA-335 I.12.6.2 aligns an eight byte value on the boundary the
-hardware needs for a `native int`, and I.12.6.6 grants atomicity only up to that same width. On a 32-bit
-runtime — x86, arm32, wasm — neither holds for the widened view, so every value goes to the monitor.
-`IsLockFree` reports this.
+**32-bit runtimes get a 32-bit word.** The widened view is a word, not eight bytes, because a word is
+what the field's alignment and the object's minimum size are both stated in. ECMA-335 I.12.6.2 aligns a
+value on the boundary a `native int` needs and I.12.6.6 grants atomicity only up to that same width, so
+on x86, arm32 and wasm the word is four bytes: `Int32`, `Colour` and the three byte struct are swapped in
+place there exactly as they are at 64 bits, while `Double`, `Nullable<Int32>` and any five to eight byte
+struct take the monitor. `IsLockFree` reports which you got, per type and per runtime.
+
+`Int64` and `UInt64` are lock-free at either width, and they are the only eight byte types that are.
+A field of one of those two is seated on an eight byte boundary wherever the hardware's instructions
+demand it, which is what makes it reachable by `Interlocked` on a 32-bit runtime at all — but only by
+`Interlocked`: an eight byte `Volatile.Read` or `Volatile.Write` can tear there, so on that path the read
+is `Interlocked.Read` and the write is `Interlocked.Exchange`. Nothing else joins them. The view has to
+be the value exactly, since there is no slack to zero, and the type's equality has to be its bits, since
+a compare-exchange there has no tail to fall back on — which is what rules `Double` out, not its size.
+
+All six read-modify-writes keep their instruction at either width, because `Int32` and `UInt32` fit the
+word and `Int64` and `UInt64` are reached by the same locked instructions the cell itself uses. They are
+gated on the cell's strategy rather than on the word size for exactly that reason: an instruction issued
+against a field the cell is guarding with a monitor would be a second writer the monitor knows nothing
+about, and a `CompareExchange` could read, compare and store across an `Increment` and drop it.
 
 **NativeAOT is supported and folds fully.** `Atomic<Int32>.Read()` compiles to a single `ldapr` and
 inlines into its caller, the same as under the JIT, and is held to that by the same tests.

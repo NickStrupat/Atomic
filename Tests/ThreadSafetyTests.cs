@@ -133,6 +133,32 @@ public abstract class ThreadSafetyTests
 	}
 
 	[Fact]
+	public void CompareExchange_WhenTheComparandIsEqualButNotIdentical_StillLetsExactlyOneWin()
+	{
+		// Tolerance ignores its second field, so every comparand below is the value the cell holds and
+		// none of them is its bit pattern. That puts all eight threads past the single instruction and
+		// into the retry that follows it, every round, which is the point: a thread that loses the race
+		// there has to go round on what it saw rather than report an inequality that never happened.
+		const Int32 Rounds = 500;
+		var atomic = Create(new Tolerance(0, 0));
+		var winners = new Int32[Rounds];
+
+		RunOnDedicatedThreads((_, barrier) =>
+		{
+			for (var round = 0; round < Rounds; round++)
+			{
+				barrier.SignalAndWait();
+				var comparand = new Tolerance(round, Int32.MaxValue);
+				if (atomic.TryCompareExchange(new Tolerance(round + 1, round + 1), comparand, out Tolerance _))
+					Interlocked.Increment(ref winners[round]);
+			}
+		});
+
+		winners.Should().AllSatisfy(count => count.Should().Be(1));
+		atomic.Read().Value.Should().Be(Rounds);
+	}
+
+	[Fact]
 	public void Write_WhenPublishedThroughASecondCell_IsVisibleToAReaderThatSawThePublication()
 	{
 		// The guarantee the library actually claims: writes release and reads acquire, so a reader that

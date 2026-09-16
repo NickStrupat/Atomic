@@ -36,6 +36,10 @@ public class ThreadSafetySuiteTests
 
 		// The comparison and the store are two steps, so a whole round can be won more than once.
 		MustCatch(unsafeCell.CompareExchange_WhenEveryThreadRacesForTheSameComparand_LetsExactlyOneWin);
+
+		// And again where the comparand is equal without being identical, which is the path that has to
+		// retry rather than report a mismatch. The window is the same one, and just as wide.
+		MustCatch(unsafeCell.CompareExchange_WhenTheComparandIsEqualButNotIdentical_StillLetsExactlyOneWin);
 	}
 
 	/// <summary>Runs <paramref name="property"/> until it fails, and requires that it does.</summary>

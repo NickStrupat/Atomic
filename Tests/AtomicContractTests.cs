@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using AwesomeAssertions;
 using NickStrupat;
 
@@ -177,17 +178,18 @@ public abstract class AtomicContractTests
 	}
 
 	[Fact]
-	public void CompareExchange_WhenValueFitsInAWord_ComparesBitsRatherThanValues()
+	public void CompareExchange_WhenValueFitsInAWord_ComparesValuesRatherThanBits()
 	{
-		// A NaN matches a NaN of the same bit pattern, even though the two are never ==.
+		// A NaN matches a NaN, which the operator would not: the cell compares with Equals, and Equals
+		// is reflexive where == is not.
 		var nan = Create(Double.NaN);
 		nan.CompareExchange(1.0, Double.NaN).Should().Be(Double.NaN);
 		nan.Read().Should().Be(1.0);
 
-		// Positive and negative zero are ==, but their bits differ, so they do not match.
+		// Positive and negative zero do not share a bit pattern, and are equal regardless.
 		var zero = Create(0.0);
 		zero.CompareExchange(1.0, -0.0).Should().Be(0.0);
-		zero.Read().Should().Be(0.0);
+		zero.Read().Should().Be(1.0);
 	}
 
 	[Fact]
@@ -250,17 +252,98 @@ public abstract class AtomicContractTests
 	}
 
 	[Fact]
-	public void TryCompareExchange_WhenBitsDisagreeWithEquality_ReportsWhatActuallyHappened()
+	public void TryCompareExchange_WhenTheOperatorDisagreesWithEquality_ReportsWhatActuallyHappened()
 	{
-		// -0.0 and 0.0 are equal under Equals but differ in their bits, so a cell comparing bits does not
-		// store. Saying so is the whole point of this method: a caller judging success by comparing the
-		// value it got back would read this as a success and drop the update.
-		(-0.0).Equals(0.0).Should().BeTrue();
+		// The cell compares with Equals, and Equals says a NaN is a NaN, so this stores. Saying so is the
+		// whole point of this method: a caller judging success by comparing the value it got back reads
+		// the swap it just made as a failure, retries, and stores twice.
+		(Double.NaN == Double.NaN).Should().BeFalse();
+		Double.NaN.Equals(Double.NaN).Should().BeTrue();
 
-		var zero = Create(0.0);
-		zero.TryCompareExchange(1.0, -0.0, out var previous).Should().BeFalse();
-		previous.Should().Be(0.0);
-		zero.Read().Should().Be(0.0);
+		var nan = Create(Double.NaN);
+		nan.TryCompareExchange(1.0, Double.NaN, out var previous).Should().BeTrue();
+		(previous == Double.NaN).Should().BeFalse();
+		nan.Read().Should().Be(1.0);
+	}
+
+	[Fact]
+	public void CompareExchange_WhenTwoValuesDifferOnlyInWidth_ComparesThemTheSameWay()
+	{
+		// Tolerance and WideTolerance mean the same thing by equality and fall on either side of the word
+		// boundary that picks the storage strategy. Which strategy a cell got is not the caller's
+		// business and must not show through here. Both comparands below name a value the cell holds,
+		// and differ from it in the field neither type reads.
+		var narrow = Create(new Tolerance(1, 100));
+		narrow.TryCompareExchange(new Tolerance(2, 0), new Tolerance(1, 999), out _).Should().BeTrue();
+		narrow.Read().Value.Should().Be(2);
+
+		var wide = Create(new WideTolerance(1, 100, 100));
+		wide.TryCompareExchange(new WideTolerance(2, 0, 0), new WideTolerance(1, 999, 999), out _).Should().BeTrue();
+		wide.Read().Value.Should().Be(2);
+
+		// And they refuse the same comparand too.
+		narrow.TryCompareExchange(new Tolerance(3, 0), new Tolerance(9, 0), out _).Should().BeFalse();
+		wide.TryCompareExchange(new WideTolerance(3, 0, 0), new WideTolerance(9, 0, 0), out _).Should().BeFalse();
+	}
+
+	[Fact]
+	public void CompareExchange_WhenTheValueHasPadding_ComparesTheFieldsAndNotThePadding()
+	{
+		var clean = new Padded { A = 7, B = 9 };
+		var dirty = PaddedWithGarbageInThePadding(7, 9);
+
+		// Without these the rest proves nothing: it would be comparing a value against itself.
+		clean.Equals(dirty).Should().BeTrue();
+		WordOf(clean).Should().NotBe(WordOf(dirty));
+
+		var cell = Create(clean);
+		cell.TryCompareExchange(new Padded { A = 1, B = 1 }, dirty, out var previous).Should().BeTrue();
+		previous.Should().Be(clean);
+		cell.Read().Should().Be(new Padded { A = 1, B = 1 });
+	}
+
+	[Fact]
+	public void CompareExchange_WhenTheValueDefinesItsOwnEquality_AsksIt()
+	{
+		// Tolerance ignores its second field, so these two comparands are the same value and a cell
+		// reading the whole word would refuse the first swap.
+		var cell = Create(new Tolerance(1, 100));
+		cell.TryCompareExchange(new Tolerance(2, 0), new Tolerance(1, 999), out var previous).Should().BeTrue();
+		previous.Ignored.Should().Be(100);
+		cell.Read().Value.Should().Be(2);
+
+		// And the field it does read still decides.
+		cell.TryCompareExchange(new Tolerance(3, 0), new Tolerance(9, 0), out _).Should().BeFalse();
+		cell.Read().Value.Should().Be(2);
+	}
+
+	/// <summary>The eight bytes of a value, padding included.</summary>
+	/// <param name="value">The value to take the bits of.</param>
+	/// <returns>The bit pattern, which two equal values need not share.</returns>
+	private static Int64 WordOf(Padded value)
+	{
+		Int64 bits = 0;
+		Unsafe.WriteUnaligned(ref Unsafe.As<Int64, Byte>(ref bits), value);
+		return bits;
+	}
+
+	/// <summary>Builds a value whose fields are the ones asked for and whose padding is not zero.</summary>
+	/// <param name="a">The value for <see cref="Padded.A"/>.</param>
+	/// <param name="b">The value for <see cref="Padded.B"/>.</param>
+	/// <returns>A value equal to one built the ordinary way, with a different bit pattern.</returns>
+	/// <remarks>
+	/// Reading the struct out of an all-ones word fills the padding, and writing the two fields
+	/// afterwards leaves only the padding holding it. Kept out of line so the fields are stored to a
+	/// stack slot rather than kept in registers, which would drop the padding on the way back.
+	/// </remarks>
+	[MethodImpl(MethodImplOptions.NoInlining)]
+	private static Padded PaddedWithGarbageInThePadding(Byte a, Int32 b)
+	{
+		var bits = -1L;
+		var value = Unsafe.ReadUnaligned<Padded>(ref Unsafe.As<Int64, Byte>(ref bits));
+		value.A = a;
+		value.B = b;
+		return value;
 	}
 }
 

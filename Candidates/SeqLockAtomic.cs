@@ -175,13 +175,18 @@ public sealed class SeqLockAtomic<T> : IAtomic<T>
 	{
 		if (IsInline)
 		{
-			switch (Unsafe.SizeOf<T>())
+			if (ExchangeBits(value, comparand, out previous))
+				return true;
+
+			// Bits differing is not the same as values differing, so the type is asked and the exchange
+			// retried against the bits actually seen. The same reasoning as Atomic<T>, which carries it.
+			while (true)
 			{
-				case 1: { var c = Unsafe.As<T, Byte>(ref comparand); var p = Interlocked.CompareExchange(ref Unsafe.As<T, Byte>(ref storage), Unsafe.As<T, Byte>(ref value), c); previous = Unsafe.As<Byte, T>(ref p); return p == c; }
-				case 2: { var c = Unsafe.As<T, UInt16>(ref comparand); var p = Interlocked.CompareExchange(ref Unsafe.As<T, UInt16>(ref storage), Unsafe.As<T, UInt16>(ref value), c); previous = Unsafe.As<UInt16, T>(ref p); return p == c; }
-				case 4: { var c = Unsafe.As<T, UInt32>(ref comparand); var p = Interlocked.CompareExchange(ref Unsafe.As<T, UInt32>(ref storage), Unsafe.As<T, UInt32>(ref value), c); previous = Unsafe.As<UInt32, T>(ref p); return p == c; }
-				case 8: { var c = Unsafe.As<T, UInt64>(ref comparand); var p = Interlocked.CompareExchange(ref Unsafe.As<T, UInt64>(ref storage), Unsafe.As<T, UInt64>(ref value), c); previous = Unsafe.As<UInt64, T>(ref p); return p == c; }
-				default: throw new UnreachableException();
+				var current = previous;
+				if (!EqualityComparer<T>.Default.Equals(current, comparand))
+					return false;
+				if (ExchangeBits(value, current, out previous))
+					return true;
 			}
 		}
 
@@ -229,6 +234,27 @@ public sealed class SeqLockAtomic<T> : IAtomic<T>
 				return false;
 			storage = value;
 			return true;
+		}
+	}
+
+	/// <summary>Exchanges the value at the width of <typeparamref name="T"/>, comparing its bits.</summary>
+	/// <param name="value">The value to store when the bits match.</param>
+	/// <param name="comparand">The value whose bits the cell is expected to hold.</param>
+	/// <param name="previous">The value held before the call.</param>
+	/// <returns><see langword="true"/> when the bits matched and the value was stored.</returns>
+	/// <remarks>
+	/// One instruction, and the only comparison the hardware offers. Called first because identical bits
+	/// are the same value, and then again per retry with the bits a previous attempt actually saw.
+	/// </remarks>
+	private Boolean ExchangeBits(T value, T comparand, out T previous)
+	{
+		switch (Unsafe.SizeOf<T>())
+		{
+			case 1: { var c = Unsafe.As<T, Byte>(ref comparand); var p = Interlocked.CompareExchange(ref Unsafe.As<T, Byte>(ref storage), Unsafe.As<T, Byte>(ref value), c); previous = Unsafe.As<Byte, T>(ref p); return p == c; }
+			case 2: { var c = Unsafe.As<T, UInt16>(ref comparand); var p = Interlocked.CompareExchange(ref Unsafe.As<T, UInt16>(ref storage), Unsafe.As<T, UInt16>(ref value), c); previous = Unsafe.As<UInt16, T>(ref p); return p == c; }
+			case 4: { var c = Unsafe.As<T, UInt32>(ref comparand); var p = Interlocked.CompareExchange(ref Unsafe.As<T, UInt32>(ref storage), Unsafe.As<T, UInt32>(ref value), c); previous = Unsafe.As<UInt32, T>(ref p); return p == c; }
+			case 8: { var c = Unsafe.As<T, UInt64>(ref comparand); var p = Interlocked.CompareExchange(ref Unsafe.As<T, UInt64>(ref storage), Unsafe.As<T, UInt64>(ref value), c); previous = Unsafe.As<UInt64, T>(ref p); return p == c; }
+			default: throw new UnreachableException();
 		}
 	}
 

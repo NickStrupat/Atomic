@@ -15,10 +15,25 @@ namespace NickStrupat;
 /// <para>
 /// Where an instruction does exist, these use it. <see cref="Add"/>, <see cref="Subtract"/>,
 /// <see cref="Increment"/>, <see cref="Decrement"/>, <see cref="And"/> and <see cref="Or"/> test
-/// <c>typeof(T)</c> against the
-/// four integers <see cref="Interlocked"/> covers, and the JIT folds that test when it specialises the
-/// method — so an instantiation with an instruction is the instruction and nothing else, and one
-/// without is the loop and nothing else. Neither carries the test.
+/// <c>typeof(T)</c> against the four integers <see cref="Interlocked"/> covers, and the JIT folds that
+/// test when it specialises the method — so an instantiation with an instruction is the instruction and
+/// nothing else, and one without is the loop and nothing else. Neither carries the test.
+/// </para>
+/// <para>
+/// Naming one of those four types is not enough on its own, because an instruction and a monitor do not
+/// exclude each other. An unguarded <c>Interlocked.Increment</c> against a field the cell is keeping
+/// behind its monitor would be a second writer the monitor knows nothing about — long enough for a
+/// <see cref="Atomic{T}.CompareExchange"/> to read, compare and store across an increment and drop it.
+/// So the six ask <c>Atomic&lt;T&gt;.IsInline</c> first, which folds with everything else and costs
+/// nothing; where it is false the loop below handles the type correctly, because the loop goes through
+/// the cell.
+/// </para>
+/// <para>
+/// At sixty four bits that gate is true for all four. At thirty two it is true for
+/// <see cref="Int32"/> and <see cref="UInt32"/>, which fit the word the cell swaps, and for
+/// <see cref="Int64"/> and <see cref="UInt64"/>, which the cell reaches with the same locked eight byte
+/// instructions this does. So the four keep their instruction at either width — which is the whole of
+/// why the gate names the cell's strategy rather than restating the word size.
 /// </para>
 /// <para>
 /// Getting at the instruction means getting a reference of the right type to the storage, and under
@@ -104,14 +119,17 @@ public static class AtomicExtensions
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
 
-		if (typeof(T) == typeof(Int32))
-			return (T)(Object)Interlocked.Add(ref ((Atomic<Int32>)(Object)atomic).Storage, (Int32)(Object)addend);
-		if (typeof(T) == typeof(Int64))
-			return (T)(Object)Interlocked.Add(ref ((Atomic<Int64>)(Object)atomic).Storage, (Int64)(Object)addend);
-		if (typeof(T) == typeof(UInt32))
-			return (T)(Object)Interlocked.Add(ref ((Atomic<UInt32>)(Object)atomic).Storage, (UInt32)(Object)addend);
-		if (typeof(T) == typeof(UInt64))
-			return (T)(Object)Interlocked.Add(ref ((Atomic<UInt64>)(Object)atomic).Storage, (UInt64)(Object)addend);
+		if (Atomic<T>.IsInline)
+		{
+			if (typeof(T) == typeof(Int32))
+				return (T)(Object)Interlocked.Add(ref ((Atomic<Int32>)(Object)atomic).Storage, (Int32)(Object)addend);
+			if (typeof(T) == typeof(Int64))
+				return (T)(Object)Interlocked.Add(ref ((Atomic<Int64>)(Object)atomic).Storage, (Int64)(Object)addend);
+			if (typeof(T) == typeof(UInt32))
+				return (T)(Object)Interlocked.Add(ref ((Atomic<UInt32>)(Object)atomic).Storage, (UInt32)(Object)addend);
+			if (typeof(T) == typeof(UInt64))
+				return (T)(Object)Interlocked.Add(ref ((Atomic<UInt64>)(Object)atomic).Storage, (UInt64)(Object)addend);
+		}
 
 		var current = atomic.Read();
 		while (true)
@@ -134,29 +152,32 @@ public static class AtomicExtensions
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
 
-		// There is no interlocked subtract, but adding the two's complement negation is the same
-		// operation on these types, including where the negation itself overflows: negating Int32.MinValue
-		// gives Int32.MinValue back, and adding that is subtracting it. The unsigned pair are written as a
-		// subtraction from zero because unary minus on them widens to a signed type first.
-		if (typeof(T) == typeof(Int32))
+		if (Atomic<T>.IsInline)
 		{
-			var negated = unchecked(-(Int32)(Object)subtrahend);
-			return (T)(Object)Interlocked.Add(ref ((Atomic<Int32>)(Object)atomic).Storage, negated);
-		}
-		if (typeof(T) == typeof(Int64))
-		{
-			var negated = unchecked(-(Int64)(Object)subtrahend);
-			return (T)(Object)Interlocked.Add(ref ((Atomic<Int64>)(Object)atomic).Storage, negated);
-		}
-		if (typeof(T) == typeof(UInt32))
-		{
-			var negated = unchecked(0U - (UInt32)(Object)subtrahend);
-			return (T)(Object)Interlocked.Add(ref ((Atomic<UInt32>)(Object)atomic).Storage, negated);
-		}
-		if (typeof(T) == typeof(UInt64))
-		{
-			var negated = unchecked(0UL - (UInt64)(Object)subtrahend);
-			return (T)(Object)Interlocked.Add(ref ((Atomic<UInt64>)(Object)atomic).Storage, negated);
+			// There is no interlocked subtract, but adding the two's complement negation is the same
+			// operation on these types, including where the negation itself overflows: negating Int32.MinValue
+			// gives Int32.MinValue back, and adding that is subtracting it. The unsigned pair are written as a
+			// subtraction from zero because unary minus on them widens to a signed type first.
+			if (typeof(T) == typeof(Int32))
+			{
+				var negated = unchecked(-(Int32)(Object)subtrahend);
+				return (T)(Object)Interlocked.Add(ref ((Atomic<Int32>)(Object)atomic).Storage, negated);
+			}
+			if (typeof(T) == typeof(Int64))
+			{
+				var negated = unchecked(-(Int64)(Object)subtrahend);
+				return (T)(Object)Interlocked.Add(ref ((Atomic<Int64>)(Object)atomic).Storage, negated);
+			}
+			if (typeof(T) == typeof(UInt32))
+			{
+				var negated = unchecked(0U - (UInt32)(Object)subtrahend);
+				return (T)(Object)Interlocked.Add(ref ((Atomic<UInt32>)(Object)atomic).Storage, negated);
+			}
+			if (typeof(T) == typeof(UInt64))
+			{
+				var negated = unchecked(0UL - (UInt64)(Object)subtrahend);
+				return (T)(Object)Interlocked.Add(ref ((Atomic<UInt64>)(Object)atomic).Storage, negated);
+			}
 		}
 
 		var current = atomic.Read();
@@ -179,14 +200,17 @@ public static class AtomicExtensions
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
 
-		if (typeof(T) == typeof(Int32))
-			return (T)(Object)Interlocked.Increment(ref ((Atomic<Int32>)(Object)atomic).Storage);
-		if (typeof(T) == typeof(Int64))
-			return (T)(Object)Interlocked.Increment(ref ((Atomic<Int64>)(Object)atomic).Storage);
-		if (typeof(T) == typeof(UInt32))
-			return (T)(Object)Interlocked.Increment(ref ((Atomic<UInt32>)(Object)atomic).Storage);
-		if (typeof(T) == typeof(UInt64))
-			return (T)(Object)Interlocked.Increment(ref ((Atomic<UInt64>)(Object)atomic).Storage);
+		if (Atomic<T>.IsInline)
+		{
+			if (typeof(T) == typeof(Int32))
+				return (T)(Object)Interlocked.Increment(ref ((Atomic<Int32>)(Object)atomic).Storage);
+			if (typeof(T) == typeof(Int64))
+				return (T)(Object)Interlocked.Increment(ref ((Atomic<Int64>)(Object)atomic).Storage);
+			if (typeof(T) == typeof(UInt32))
+				return (T)(Object)Interlocked.Increment(ref ((Atomic<UInt32>)(Object)atomic).Storage);
+			if (typeof(T) == typeof(UInt64))
+				return (T)(Object)Interlocked.Increment(ref ((Atomic<UInt64>)(Object)atomic).Storage);
+		}
 
 		var current = atomic.Read();
 		while (true)
@@ -209,14 +233,17 @@ public static class AtomicExtensions
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
 
-		if (typeof(T) == typeof(Int32))
-			return (T)(Object)Interlocked.Decrement(ref ((Atomic<Int32>)(Object)atomic).Storage);
-		if (typeof(T) == typeof(Int64))
-			return (T)(Object)Interlocked.Decrement(ref ((Atomic<Int64>)(Object)atomic).Storage);
-		if (typeof(T) == typeof(UInt32))
-			return (T)(Object)Interlocked.Decrement(ref ((Atomic<UInt32>)(Object)atomic).Storage);
-		if (typeof(T) == typeof(UInt64))
-			return (T)(Object)Interlocked.Decrement(ref ((Atomic<UInt64>)(Object)atomic).Storage);
+		if (Atomic<T>.IsInline)
+		{
+			if (typeof(T) == typeof(Int32))
+				return (T)(Object)Interlocked.Decrement(ref ((Atomic<Int32>)(Object)atomic).Storage);
+			if (typeof(T) == typeof(Int64))
+				return (T)(Object)Interlocked.Decrement(ref ((Atomic<Int64>)(Object)atomic).Storage);
+			if (typeof(T) == typeof(UInt32))
+				return (T)(Object)Interlocked.Decrement(ref ((Atomic<UInt32>)(Object)atomic).Storage);
+			if (typeof(T) == typeof(UInt64))
+				return (T)(Object)Interlocked.Decrement(ref ((Atomic<UInt64>)(Object)atomic).Storage);
+		}
 
 		var current = atomic.Read();
 		while (true)
@@ -240,14 +267,17 @@ public static class AtomicExtensions
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
 
-		if (typeof(T) == typeof(Int32))
-			return (T)(Object)Interlocked.And(ref ((Atomic<Int32>)(Object)atomic).Storage, (Int32)(Object)value);
-		if (typeof(T) == typeof(Int64))
-			return (T)(Object)Interlocked.And(ref ((Atomic<Int64>)(Object)atomic).Storage, (Int64)(Object)value);
-		if (typeof(T) == typeof(UInt32))
-			return (T)(Object)Interlocked.And(ref ((Atomic<UInt32>)(Object)atomic).Storage, (UInt32)(Object)value);
-		if (typeof(T) == typeof(UInt64))
-			return (T)(Object)Interlocked.And(ref ((Atomic<UInt64>)(Object)atomic).Storage, (UInt64)(Object)value);
+		if (Atomic<T>.IsInline)
+		{
+			if (typeof(T) == typeof(Int32))
+				return (T)(Object)Interlocked.And(ref ((Atomic<Int32>)(Object)atomic).Storage, (Int32)(Object)value);
+			if (typeof(T) == typeof(Int64))
+				return (T)(Object)Interlocked.And(ref ((Atomic<Int64>)(Object)atomic).Storage, (Int64)(Object)value);
+			if (typeof(T) == typeof(UInt32))
+				return (T)(Object)Interlocked.And(ref ((Atomic<UInt32>)(Object)atomic).Storage, (UInt32)(Object)value);
+			if (typeof(T) == typeof(UInt64))
+				return (T)(Object)Interlocked.And(ref ((Atomic<UInt64>)(Object)atomic).Storage, (UInt64)(Object)value);
+		}
 
 		var current = atomic.Read();
 		while (true)
@@ -269,14 +299,17 @@ public static class AtomicExtensions
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
 
-		if (typeof(T) == typeof(Int32))
-			return (T)(Object)Interlocked.Or(ref ((Atomic<Int32>)(Object)atomic).Storage, (Int32)(Object)value);
-		if (typeof(T) == typeof(Int64))
-			return (T)(Object)Interlocked.Or(ref ((Atomic<Int64>)(Object)atomic).Storage, (Int64)(Object)value);
-		if (typeof(T) == typeof(UInt32))
-			return (T)(Object)Interlocked.Or(ref ((Atomic<UInt32>)(Object)atomic).Storage, (UInt32)(Object)value);
-		if (typeof(T) == typeof(UInt64))
-			return (T)(Object)Interlocked.Or(ref ((Atomic<UInt64>)(Object)atomic).Storage, (UInt64)(Object)value);
+		if (Atomic<T>.IsInline)
+		{
+			if (typeof(T) == typeof(Int32))
+				return (T)(Object)Interlocked.Or(ref ((Atomic<Int32>)(Object)atomic).Storage, (Int32)(Object)value);
+			if (typeof(T) == typeof(Int64))
+				return (T)(Object)Interlocked.Or(ref ((Atomic<Int64>)(Object)atomic).Storage, (Int64)(Object)value);
+			if (typeof(T) == typeof(UInt32))
+				return (T)(Object)Interlocked.Or(ref ((Atomic<UInt32>)(Object)atomic).Storage, (UInt32)(Object)value);
+			if (typeof(T) == typeof(UInt64))
+				return (T)(Object)Interlocked.Or(ref ((Atomic<UInt64>)(Object)atomic).Storage, (UInt64)(Object)value);
+		}
 
 		var current = atomic.Read();
 		while (true)
