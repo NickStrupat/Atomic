@@ -180,10 +180,13 @@ public class StorageTests
 		Reentrant.Cell = cell;
 		try
 		{
+			// The comparand differs in the one field Equals ignores, so the bits do not match and the type
+			// is actually asked. Naming the held value exactly would be answered from the bits alone and
+			// this would test nothing.
 			var swap = Task.Run(
 				() => cell.TryCompareExchange(
 					new Reentrant { A = 9, B = 9, C = 9 },
-					new Reentrant { A = 1, B = 2, C = 3 },
+					new Reentrant { A = 1, B = 2, C = 3, Ignored = 7 },
 					out _),
 				TestContext.Current.CancellationToken);
 

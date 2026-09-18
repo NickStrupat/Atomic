@@ -27,7 +27,7 @@ dotnet run -c Release --project Benchmarks -- contention
 dotnet run -c Release --project Benchmarks -- gc
 ```
 
-Release is 131 tests; Debug is 127 + 4 skipped. Zero warnings is the standing state — keep it, because
+Release is 136 tests; Debug is 132 + 4 skipped. Zero warnings is the standing state — keep it, because
 `GenerateDocumentationFile` is on and it is what catches a `cref` to something you just deleted.
 
 The 32-bit strategies are only exercised on real 32-bit hardware — an arm32 Raspberry Pi 3B on the
@@ -43,7 +43,7 @@ tar -czf - -C Tests/bin/Release/net10.0/linux-arm publish | ssh pi@raspberrypi3.
 ssh pi@raspberrypi3.local 'cd atomic && chmod +x Tests CodegenProbe && ./Tests'
 ```
 
-131 there too, 14 skipped: the 11 `TypeLayout` rows, the two arm64 mnemonic assertions, and the
+136 there too, 14 skipped: the 11 `TypeLayout` rows, the two arm64 mnemonic assertions, and the
 NativeAOT leg, since ILC does not target 32-bit `linux-arm`. `TheStorageStrategyIsChosenWhenTheJitCompilesTheCell`
 does run there and passes. Do not build on the device — it has 1 GB of RAM.
 
@@ -108,7 +108,21 @@ that failed to fold would leave the loop's compare-and-swap in the body.
 type with `EqualityComparer<T>.Default` at every width. The inline path still issues its one `casal`
 first and only consults the type when that misses, which is sound because identical bits are the same
 value and `Equals` is required to be reflexive — a bits-match is an `Equals`-match for anything honouring
-that. The tail is `NoInlining` on purpose: `TryCompareExchange` has to stay small enough to inline into
+that. **The monitor path compares bits first for the same reason**, through `HoldsTheSameValueAs`, and
+this is not an optimisation: asking the type first made the two strategies disagree. A struct whose
+`Equals` compares a `Double` with `==` calls a `NaN`-bearing value unequal to itself, so the wide cell
+refused to exchange a value it was holding while the narrow one had already stored over it, and every
+retry loop offering that value back went round forever. The candidates had it too and were fixed with it: `SeqLockAtomic`'s seqlock path already had
+`BitsEqual` and now calls it first, and `BoxAtomic`'s slot path carries the same helper as the cell.
+`AtomicContractTests` holds all three to the comparison and `AtomicReflexivityTests` holds the cell to
+the loop. Bits are only compared where they mean something — a `T` holding a reference goes straight to
+the type, since reading its bits races a moving GC.
+
+Ordering bits before the type also means the type may not be asked at all, which took a test's teeth
+out: `SeqLockAtomic_ComparesOutsideTheCounter` proves a reentrant `Equals` cannot deadlock, and its
+comparand named the held value exactly, so the bits answered and `Equals` never ran. `Reentrant` gained
+an `Ignored` field for the comparand to differ in. A test that needs user equality to run now has to
+make the bits differ. The tail is `NoInlining` on purpose: `TryCompareExchange` has to stay small enough to inline into
 the loops in `AtomicExtensions`, and `CodegenTests` asserting `Increment[System.Decimal]` contains
 `Monitor` is what would notice if it stopped.
 

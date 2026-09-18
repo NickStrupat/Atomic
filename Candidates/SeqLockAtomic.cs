@@ -202,10 +202,15 @@ public sealed class SeqLockAtomic<T> : IAtomic<T>
 			// The comparison is the caller's code, so it runs outside the counter rather than inside it. A slow
 			// Equals held off every reader; one that touched this cell again hung the thread for good, because
 			// the counter, unlike a monitor, does not readmit the thread already holding it.
+			//
+			// Bits are tried before the type for the reason BitsEqual gives: values it joins are identical and
+			// so equal under any comparer — including one that calls a value unequal to itself, which the
+			// inline path above stores over and which this path must not refuse.
 			while (true)
 			{
 				var snapshot = ReadSeqLock();
-				if (!EqualityComparer<T>.Default.Equals(snapshot, comparand))
+				if (!BitsEqual(ref snapshot, ref comparand)
+					&& !EqualityComparer<T>.Default.Equals(snapshot, comparand))
 				{
 					// The snapshot was the whole value at a point inside this call, so failing against it is a
 					// failure the caller could have seen; no write lock is needed to report it.

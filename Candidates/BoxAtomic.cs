@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 
 namespace NickStrupat;
 
@@ -133,13 +134,29 @@ public sealed class BoxAtomic<T> : IAtomic<T>
 		{
 			var currentSlot = Volatile.Read(ref managed);
 			previous = FromSlot(currentSlot);
-			if (!EqualityComparer<T>.Default.Equals(previous, comparand))
+			if (!HoldsTheSameValueAs(previous, comparand))
 				return false;
 			slot ??= ToSlot(value);
 			if (ReferenceEquals(Interlocked.CompareExchange(ref managed, slot, currentSlot), currentSlot))
 				return true;
 		}
 	}
+
+	/// <summary>Whether a value the cell is holding is the value a comparand names.</summary>
+	/// <param name="held">The value taken out of the slot.</param>
+	/// <param name="comparand">The value the caller expects it to be.</param>
+	/// <returns><see langword="true"/> when the two are the same value.</returns>
+	/// <remarks>
+	/// Identical bits are the same value whatever the type says, so they are tried first — which is what
+	/// the inline path gets from its instruction for nothing, and what keeps a cell from refusing a
+	/// comparand naming the value it is holding. A <typeparamref name="T"/> holding a reference goes
+	/// straight to the type, since reading the bits of one races a moving GC.
+	/// </remarks>
+	private static Boolean HoldsTheSameValueAs(T held, T comparand) =>
+		(!RuntimeHelpers.IsReferenceOrContainsReferences<T>()
+			&& MemoryMarshal.CreateReadOnlySpan(ref Unsafe.As<T, Byte>(ref held), Unsafe.SizeOf<T>())
+				.SequenceEqual(MemoryMarshal.CreateReadOnlySpan(ref Unsafe.As<T, Byte>(ref comparand), Unsafe.SizeOf<T>())))
+		|| EqualityComparer<T>.Default.Equals(held, comparand);
 
 	private sealed class Box(T value)
 	{

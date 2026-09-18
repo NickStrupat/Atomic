@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 
 namespace NickStrupat;
 
@@ -243,7 +244,9 @@ public sealed class Atomic<T>
 	/// <remarks>
 	/// A reference is compared by identity and by nothing else. A value type is compared with
 	/// <see cref="EqualityComparer{T}.Default"/> whatever its width and wherever the cell keeps it, so
-	/// two values the type calls equal match here even when their bits differ. Prefer
+	/// two values the type calls equal match here even when their bits differ — and two values with the
+	/// same bits match even where the type calls them unequal, which is the only way a cell can honour a
+	/// comparand naming a value it is holding. Prefer
 	/// <see cref="TryCompareExchange"/> in a loop rather than judging from the value returned whether
 	/// the exchange happened.
 	/// </remarks>
@@ -307,12 +310,43 @@ public sealed class Atomic<T>
 		lock (this)
 		{
 			previous = storage;
-			if (!EqualityComparer<T>.Default.Equals(previous, comparand))
+			if (!HoldsTheSameValueAs(previous, comparand))
 				return false;
 			storage = value;
 			return true;
 		}
 	}
+
+	/// <summary>Whether a value the cell is holding is the value a comparand names.</summary>
+	/// <param name="held">The value read out of the cell.</param>
+	/// <param name="comparand">The value the caller expects it to be.</param>
+	/// <returns><see langword="true"/> when the two are the same value.</returns>
+	/// <remarks>
+	/// <para>
+	/// Identical bits are the same value, whatever the type says, so bits are tried first and the type is
+	/// only asked when they differ. That is not an optimisation, it is what keeps this path answering
+	/// what the inline one answers: there the instruction compares bits before anything else can, and a
+	/// type that calls a value unequal to itself is stored over anyway. Asking the type first made a cell
+	/// refuse to exchange a value it was holding, and a retry loop offering that value back went round
+	/// forever.
+	/// </para>
+	/// <para>
+	/// Bits are compared only where they mean something. A value holding a reference is left to the type,
+	/// because reading the bits of one races a moving GC, and because the reference the type compares is
+	/// the thing that matters rather than the address it currently sits at.
+	/// </para>
+	/// </remarks>
+	private static Boolean HoldsTheSameValueAs(T held, T comparand) =>
+		(!RuntimeHelpers.IsReferenceOrContainsReferences<T>() && SameBits(held, comparand))
+		|| EqualityComparer<T>.Default.Equals(held, comparand);
+
+	/// <summary>Whether two values of an unmanaged type occupy the same bits, padding included.</summary>
+	/// <param name="a">One value.</param>
+	/// <param name="b">The other.</param>
+	/// <returns><see langword="true"/> when every byte matches.</returns>
+	private static Boolean SameBits(T a, T b) =>
+		MemoryMarshal.CreateReadOnlySpan(ref Unsafe.As<T, Byte>(ref a), Unsafe.SizeOf<T>())
+			.SequenceEqual(MemoryMarshal.CreateReadOnlySpan(ref Unsafe.As<T, Byte>(ref b), Unsafe.SizeOf<T>()));
 
 	/// <summary>
 	/// Finishes a compare-exchange whose single instruction did not match, for a value held in a word.

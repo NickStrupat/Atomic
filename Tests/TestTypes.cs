@@ -1,3 +1,4 @@
+using System.Numerics;
 using NickStrupat;
 
 namespace Tests;
@@ -42,6 +43,15 @@ public struct Reentrant : IEquatable<Reentrant>
 	public Int64 A;
 	public Int64 B;
 	public Int64 C;
+
+	/// <summary>A field <see cref="Equals(Reentrant)"/> does not read.</summary>
+	/// <remarks>
+	/// Its only job is to let a comparand differ from the cell in bits while still comparing equal. A
+	/// cell tries bits before it asks the type, so a comparand identical to what is held never reaches
+	/// <see cref="Equals(Reentrant)"/> at all — and a test about where that comparison runs would prove
+	/// nothing.
+	/// </remarks>
+	public Int64 Ignored;
 
 	/// <summary>The cell to read from inside <see cref="Equals(Reentrant)"/>, if any.</summary>
 	public static SeqLockAtomic<Reentrant>? Cell;
@@ -154,4 +164,62 @@ public readonly struct Tolerance(Int32 value, Int32 ignored) : IEquatable<Tolera
 
 	/// <inheritdoc />
 	public override Int32 GetHashCode() => Value.GetHashCode();
+}
+
+/// <summary>
+/// 8 bytes whose <see cref="Equals(Unreflexive)"/> calls a value unequal to itself.
+/// </summary>
+/// <remarks>
+/// <see cref="Object.Equals(Object)"/> is required to be reflexive and this breaks that, but it breaks
+/// it the way a caller actually would rather than on purpose: comparing a <see cref="Double"/> with
+/// <c>==</c>, which is false for <see cref="Double.NaN"/>. The pair exists for the same reason
+/// <see cref="Tolerance"/> and <see cref="WideTolerance"/> do — to hold the two storage strategies to
+/// one answer — in the one case where the answer they owe is not obvious.
+/// </remarks>
+public readonly struct Unreflexive(Double value) : IEquatable<Unreflexive>
+{
+	/// <summary>The field equality reads, and the reason it is not reflexive.</summary>
+	public Double Value { get; } = value;
+
+	/// <inheritdoc />
+	public Boolean Equals(Unreflexive other) => Value == other.Value;
+
+	/// <inheritdoc />
+	public override Boolean Equals(Object? obj) => obj is Unreflexive other && Equals(other);
+
+	/// <inheritdoc />
+	public override Int32 GetHashCode() => Value.GetHashCode();
+}
+
+/// <summary>
+/// <see cref="Unreflexive"/> with two more fields, putting it past the word and onto the monitor
+/// without changing what its equality means.
+/// </summary>
+public readonly struct WideUnreflexive(Double value)
+	: IEquatable<WideUnreflexive>, IAdditionOperators<WideUnreflexive, WideUnreflexive, WideUnreflexive>
+{
+	/// <summary>The field equality reads, and the reason it is not reflexive.</summary>
+	public Double Value { get; } = value;
+
+	/// <summary>A field that only exists to put the type past the word.</summary>
+	public Double Second { get; } = value;
+
+	/// <summary>Another one.</summary>
+	public Double Third { get; } = value;
+
+	/// <inheritdoc />
+	public Boolean Equals(WideUnreflexive other) => Value == other.Value;
+
+	/// <inheritdoc />
+	public override Boolean Equals(Object? obj) => obj is WideUnreflexive other && Equals(other);
+
+	/// <inheritdoc />
+	public override Int32 GetHashCode() => Value.GetHashCode();
+
+	/// <summary>Adds two values, so that a read-modify-write loop can be pointed at this type.</summary>
+	/// <param name="left">The left operand.</param>
+	/// <param name="right">The right operand.</param>
+	/// <returns>A value holding the sum.</returns>
+	public static WideUnreflexive operator +(WideUnreflexive left, WideUnreflexive right) =>
+		new(left.Value + right.Value);
 }

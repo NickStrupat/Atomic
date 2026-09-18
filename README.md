@@ -127,7 +127,8 @@ step and isn't.
 **A comparand is compared by what `T` is, not by how wide it is.** A reference is compared by identity
 and by nothing else. A value type is compared with `EqualityComparer<T>.Default` — its `IEquatable<T>`
 implementation, or the one the compiler wrote for a `record struct` — whatever its width and whichever
-strategy the cell picked:
+strategy the cell picked. Identical bits are taken as the same value without asking the type, which only
+shows for a type that calls a value unequal to itself:
 
 ```csharp
 new Atomic<Double>(-0.0).CompareExchange(99.0, comparand: 0.0);    // stores: -0.0 equals 0.0

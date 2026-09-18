@@ -287,6 +287,26 @@ public abstract class AtomicContractTests
 	}
 
 	[Fact]
+	public void CompareExchange_WhenAValueIsNotEqualToItself_StillMatchesTheValueTheCellHolds()
+	{
+		// A comparand naming the value the cell is holding has to match it, and a type is not free to say
+		// otherwise about a value identical to it bit for bit. Unreflexive says otherwise anyway: it
+		// compares a Double with ==, which is false for NaN, so it calls a value unequal to itself.
+		//
+		// A cell reaching for its instruction never asks, because the bits match and the exchange lands
+		// first. A cell that has to ask got a different answer and refused a swap the narrow one had
+		// already made — and worse, a retry loop offering that value back went round forever. Which
+		// strategy a cell picked is not the caller's business, here least of all.
+		var narrow = Create(new Unreflexive(Double.NaN));
+		narrow.TryCompareExchange(new Unreflexive(1), new Unreflexive(Double.NaN), out _).Should().BeTrue();
+		narrow.Read().Value.Should().Be(1);
+
+		var wide = Create(new WideUnreflexive(Double.NaN));
+		wide.TryCompareExchange(new WideUnreflexive(1), new WideUnreflexive(Double.NaN), out _).Should().BeTrue();
+		wide.Read().Value.Should().Be(1);
+	}
+
+	[Fact]
 	public void CompareExchange_WhenTheValueHasPadding_ComparesTheFieldsAndNotThePadding()
 	{
 		var clean = new Padded { A = 7, B = 9 };
@@ -365,4 +385,40 @@ public sealed class BoxAtomicTests : AtomicContractTests
 public sealed class SeqLockAtomicTests : AtomicContractTests
 {
 	protected override IAtomic<T> Create<T>(T value) => new SeqLockAtomic<T>(value);
+}
+
+/// <summary>
+/// What a read-modify-write owes a type that calls a value unequal to itself.
+/// </summary>
+/// <remarks>
+/// The comparison itself is in <see cref="AtomicContractTests"/>, where every implementation answers
+/// it. This is the part only the shipping cell can be asked, <see cref="AtomicExtensions"/> being
+/// declared against <see cref="Atomic{T}"/> rather than against <see cref="IAtomic{T}"/>.
+/// </remarks>
+public sealed class AtomicReflexivityTests
+{
+	[Fact]
+	public void TheTwoStrategiesAreTheOnesThisIsAbout()
+	{
+		// Without this the test below could go green having exercised one strategy twice.
+		Atomic<Unreflexive>.IsLockFree.Should().BeTrue("this is the strategy that compares bits first");
+		Atomic<WideUnreflexive>.IsLockFree.Should().BeFalse("this is the strategy that has to ask the type");
+	}
+
+	[Fact]
+	public async Task ReadModifyWrite_WhenAValueIsNotEqualToItself_Finishes()
+	{
+		// The visible symptom of the disagreement above. A loop retries on the value it was handed back,
+		// which is the value it just offered, so a cell that refuses its own value refuses every attempt
+		// and the loop never ends. That does not fail, it hangs, so the assertion has to be a deadline.
+		var cell = new Atomic<WideUnreflexive>(new WideUnreflexive(Double.NaN));
+
+		var attempt = Task.Run(() => cell.Add(new WideUnreflexive(1)), TestContext.Current.CancellationToken);
+		var finished = await Task.WhenAny(
+			attempt,
+			Task.Delay(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
+
+		finished.Should().BeSameAs(attempt, "a read-modify-write must not spin forever on a value the cell holds");
+		await attempt;
+	}
 }
