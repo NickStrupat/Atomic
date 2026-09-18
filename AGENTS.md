@@ -30,6 +30,23 @@ dotnet run -c Release --project Benchmarks -- gc
 Release is 132 tests; Debug is 128 + 4 skipped. Zero warnings is the standing state — keep it, because
 `GenerateDocumentationFile` is on and it is what catches a `cref` to something you just deleted.
 
+The 32-bit strategies are only exercised on real 32-bit hardware — an arm32 Raspberry Pi 3B on the
+development network (`pi@raspberrypi3.local`, Raspbian trixie, glibc 2.41, four cores). A Cortex-A53
+implements AArch32 at EL0, which Apple Silicon does not, so this is not reachable by container or
+emulator; QEMU would also serialise the atomics and make every race test pass for the wrong reason.
+xunit v3 under MTP builds an executable, so nothing needs an SDK on the device:
+
+```
+dotnet publish Tests -c Release -r linux-arm --self-contained
+tar -czf - -C Tests/bin/Release/net10.0/linux-arm publish | ssh pi@raspberrypi3.local \
+  'rm -rf atomic && mkdir atomic && tar -xzf - -C atomic --strip-components=1'
+ssh pi@raspberrypi3.local 'cd atomic && chmod +x Tests CodegenProbe && ./Tests'
+```
+
+132 there too, 14 skipped: the 11 `TypeLayout` rows, the two arm64 mnemonic assertions, and the
+NativeAOT leg, since ILC does not target 32-bit `linux-arm`. `TheStorageStrategyIsChosenWhenTheJitCompilesTheCell`
+does run there and passes. Do not build on the device — it has 1 GB of RAM.
+
 ## Invariants
 
 **`Atomic<T>` declares exactly one field.** A second field lets the runtime seat it first, which pushes
@@ -166,6 +183,16 @@ failing every attempt in a row is the different claim worth failing the build on
   (7.39 against 7.56), so there is nothing to win back by rearranging that line.
 - `Atomic<Three>`'s write cost is a store-to-load-forwarding stall (narrow stores, wide load), not
   anything about the strategy. The read path forwards cleanly.
+- **A box of a `Decimal` is not a fixed number of bytes at 32 bits.** `BoxSize = 32` was exact at 64
+  bits and wrong on arm32, where such a box is 28 bytes and the allocator prepends a 12-byte filler to
+  put the `Decimal` on the 8-byte boundary it wants. 28 and 12 come to a multiple of 8, so the next one
+  needs a filler too: 40 bytes charged for 19902 boxes out of 20000, 28 for the rest, in no fixed
+  proportion. A class holding four `Int32`s is 24 bytes every time, which is the control that says
+  alignment rather than header size. `StorageTests` now measures one box on the runtime it is running on
+  and asserts a band admitting one box per call — calibrated against a stand-in, never against
+  `BoxAtomic`, because calibrating on the thing under test would let a cell building a box per attempt
+  set its own band and pass. To separate an object's size from what it is charged, read `m_BaseSize`,
+  the second DWORD of its method table; allocation accounting alone conflates the two.
 - **`BoxAtomic`'s write advantage reverses once GC pause is charged.** Gen0 is stop-the-world for every
   thread, so the cost lands on bystanders. `-- gc` measures each cell alone and beside 7 non-allocating
   bystanders for exactly this reason (`GC.GetTotalPauseDuration`,

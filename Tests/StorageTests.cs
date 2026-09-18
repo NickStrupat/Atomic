@@ -13,7 +13,27 @@ namespace Tests;
 public class StorageTests
 {
 	private const Int32 Iterations = 10_000;
-	private const Int64 BoxSize = 32; // object header plus a Decimal
+
+	/// <summary>What one box costs on this runtime, at its cheapest and its dearest.</summary>
+	/// <remarks>
+	/// <para>
+	/// This was written down as 32 — an object header plus a Decimal — until a thirty two bit runtime
+	/// disagreed. A Decimal wants an eight byte boundary and a four byte object header does not leave it
+	/// on one, so such a box is 28 bytes and the allocator puts a twelve byte filler in front of it to
+	/// seat it. 28 and 12 come to a multiple of eight, so the next one needs a filler too: measured on an
+	/// arm32 Pi, 40 bytes were charged for 19902 boxes out of 20000 and 28 for the rest, in no fixed
+	/// proportion. A class holding four Int32s is 24 bytes every single time, so this is the alignment
+	/// and not the header. At sixty four bits nothing is padded and both ends of this are 32.
+	/// </para>
+	/// <para>
+	/// So what the two tests below assert is the number of boxes and not a byte count: a band wide enough
+	/// for one box per call and too narrow for two. It is measured against <see cref="BoxOfDecimal"/>
+	/// rather than against the cell under test, because calibrating on the thing being measured would let
+	/// a cell that built a box per attempt set its own band and pass — which is the regression the second
+	/// test exists for.
+	/// </para>
+	/// </remarks>
+	private static readonly (Int64 Least, Int64 Most) OneBox = MeasureOneBox();
 
 	[Fact]
 	public void Atomic_TakesALockOnlyForValuesItCannotSwapInPlace()
@@ -246,7 +266,8 @@ public class StorageTests
 	[Fact]
 	public void Write_WhenValueIsWiderThanAWord_AllocatesOnlyWhereTheValueIsBoxed()
 	{
-		MeasureWrites(new BoxAtomic<Decimal>(0m), 1m).Should().Be(Iterations * BoxSize);
+		MeasureWrites(new BoxAtomic<Decimal>(0m), 1m)
+			.Should().BeInRange(Iterations * OneBox.Least, Iterations * OneBox.Most);
 
 		MeasureWrites(new AtomicAdapter<Decimal>(new Atomic<Decimal>(0m)), 1m).Should().Be(0);
 		MeasureWrites(new SeqLockAtomic<Decimal>(0m), 1m).Should().Be(0);
@@ -258,7 +279,8 @@ public class StorageTests
 		// Every thread exchanges the value the cell already holds, so the comparison always passes and a
 		// thread whose exchange loses finds the same comparand still waiting and goes round the inner
 		// loop. Building the box inside that loop spent one on every attempt: at eight threads this
-		// measured 155 bytes per call rather than 32. The box cannot be built any later than it is —
+		// measured 155 bytes per call, against the 28 to 40 one box costs. The box cannot be built any
+		// later than it is —
 		// nothing can be exchanged in before it exists — but it need not be built again.
 		//
 		// A run that happened to see no contention would pass without proving anything. Eight threads
@@ -283,7 +305,9 @@ public class StorageTests
 		foreach (var thread in threads)
 			thread.Join();
 
-		bytes.Should().Be(Threads * (Int64)PerThread * BoxSize);
+		bytes.Should().BeInRange(
+			Threads * (Int64)PerThread * OneBox.Least,
+			Threads * (Int64)PerThread * OneBox.Most);
 	}
 
 	/// <summary>Checks what boundary a cell's field really does begin on.</summary>
@@ -300,6 +324,39 @@ public class StorageTests
 	{
 		var probe = new Atomic<T>(default);
 		return ((nint)Unsafe.AsPointer(ref probe.Storage) & (alignment - 1)) == 0;
+	}
+
+	/// <summary>A class shaped like the box <see cref="BoxAtomic{T}"/> builds for a wide value.</summary>
+	/// <remarks>
+	/// Deliberately not that box, which is private and would be the wrong thing to measure anyway: see
+	/// the remarks on <see cref="OneBox"/>.
+	/// </remarks>
+	private sealed class BoxOfDecimal(Decimal value)
+	{
+		internal readonly Decimal Value = value;
+	}
+
+	/// <summary>Keeps a measured allocation reachable, so that nothing is free to delete it.</summary>
+	private static Object? sink;
+
+	/// <summary>Measures what a single box is charged, at its cheapest and its dearest.</summary>
+	/// <returns>The least and the most that one allocation cost.</returns>
+	private static (Int64 Least, Int64 Most) MeasureOneBox()
+	{
+		for (var i = 0; i < 1_000; i++)
+			sink = new BoxOfDecimal(i);
+
+		Int64 least = Int64.MaxValue, most = 0;
+		for (var i = 0; i < 2_000; i++)
+		{
+			var before = GC.GetAllocatedBytesForCurrentThread();
+			sink = new BoxOfDecimal(i);
+			var charged = GC.GetAllocatedBytesForCurrentThread() - before;
+			least = Math.Min(least, charged);
+			most = Math.Max(most, charged);
+		}
+
+		return (least, most);
 	}
 
 	private static Int64 MeasureWrites<T>(IAtomic<T> atomic, T value)
