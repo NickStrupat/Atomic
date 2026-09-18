@@ -67,10 +67,10 @@ public sealed class SeqLockAtomic<T> : IAtomic<T>
 	/// references, it matches an interlocked width, and the runtime is obliged to align it for one.
 	/// </summary>
 	/// <remarks>
-	/// The alignment test is not pedantry. An eight byte struct of two <see cref="Int32"/> fields has an
-	/// alignment of four, so the runtime may seat it four bytes into the object, and a sixty four bit
+	/// The alignment test is not pedantry. An 8-byte struct of two <see cref="Int32"/> fields has an
+	/// alignment of 4, so the runtime may seat it 4 bytes into the object, and a 64-bit
 	/// atomic instruction on that address raises <see cref="DataMisalignedException"/> on arm64. Copying
-	/// the bytes into a field which is itself eight bytes wide, as <see cref="Atomic{T}"/> does, sidesteps
+	/// the bytes into a field which is itself 8 bytes wide, as <see cref="Atomic{T}"/> does, sidesteps
 	/// the question; reinterpreting the value where it lies does not.
 	/// </remarks>
 	private static Boolean IsInline
@@ -314,9 +314,9 @@ public sealed class SeqLockAtomic<T> : IAtomic<T>
 	/// <summary>Marks the counter even again, at a value no reader can mistake for the one before.</summary>
 	/// <param name="stamp">The value returned by <see cref="AcquireWrite"/>.</param>
 	/// <remarks>
-	/// The counter is sixty four bits wide so that it cannot come back around to a value a reader is still
-	/// holding. At thirty two bits a reader descheduled across two billion writes would see the counter it
-	/// started with and accept a torn snapshot; at sixty four the wrap is unreachable. The width costs
+	/// The counter is 64 bits wide so that it cannot come back around to a value a reader is still
+	/// holding. At 32 bits a reader descheduled across 2 billion writes would see the counter it
+	/// started with and accept a torn snapshot; at 64 the wrap is unreachable. The width costs
 	/// nothing for the values this path serves, since a counter beside a value of a word or more lands in
 	/// padding either way.
 	/// </remarks>

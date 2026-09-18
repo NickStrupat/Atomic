@@ -62,7 +62,7 @@ convenient.
 NativeAOT cannot evaluate keeps the monitor path live, drags a `try`/`finally` in, and pushes the method
 past the inlining budget. `CodegenTests` is the only test that would notice.
 
-**The widened view is a word, and the word is `IntPtr.Size`.** Not eight bytes — a word is what the
+**The widened view is a word, and the word is `IntPtr.Size`.** Not 8 bytes — a word is what the
 field's alignment and the object's minimum size are both stated in, so writing it this way is what makes
 the trick hold at 32 bits instead of surrendering every value type to the monitor there. `Widen<TView>` /
 `Narrow<TView>` are generic over the view for this: `IntPtr` for `FitsInWord`, `Int64` for the other.
@@ -126,7 +126,7 @@ the new value; `And`/`Or`/`Xor` return the old one.
   makes `Atomic<Decimal>` say `1.0m != 1.00m`, never calls a type's `Equals`, makes padding observable,
   and bit-comparing a struct holding references races with a moving GC. The old rule was width-picked
   and indefensible: `Eight` and `Twelve` are the same `record struct` and compared differently, and an
-  eight-byte type with interior padding could fail a compare-exchange forever. `Tolerance`/
+  8-byte type with interior padding could fail a compare-exchange forever. `Tolerance`/
   `WideTolerance` in `Tests/TestTypes.cs` hold the two strategies to one answer.
 - **A struct holding references keeps its own `Equals`, references and all.** `Tagged(Int32, String)`
   goes on comparing its `String` by value. "Identity and nothing else" governs `Atomic<SomeClass>`; once

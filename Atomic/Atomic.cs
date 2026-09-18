@@ -11,33 +11,32 @@ namespace NickStrupat;
 /// The value lives in a single field of type <typeparamref name="T"/>, so the runtime lays each cell
 /// out to fit and nothing is ever boxed. Any value holding no references and no wider than a machine
 /// word is read and written through a word sized view of that field, whatever its own size or
-/// alignment — including sizes no instruction matches, such as three bytes.
+/// alignment — including sizes no instruction matches, such as 3 bytes.
 /// </para>
 /// <para>
 /// Two facts about the runtime allow that, and both depend on <c>storage</c> being the only field this
 /// class declares. A lone field begins one word into the object and objects are word aligned, so the
-/// view is aligned; and the minimum size of an object leaves a whole word there, so a three byte value
+/// view is aligned; and the minimum size of an object leaves a whole word there, so a 3-byte value
 /// has slack behind it which belongs to nobody. Writes zero the slack, so the bit pattern of a given
 /// value is always the same and <see cref="CompareExchange"/> compares something meaningful.
 /// </para>
 /// <para>
-/// Both facts are about a word rather than about eight bytes, which is why a word is what the view is.
-/// At sixty four bits that is eight bytes and every unmanaged value up to that size is swapped where it
-/// lies; at thirty two it is four, and a wider value has neither the alignment nor the slack. ECMA-335
-/// I.12.6.2 aligns an eight byte value only on the boundary a <c>native int</c> needs, and I.12.6.6
-/// grants atomicity only up to that same width, so there the eight byte view would be both misaligned
+/// Both facts are about a word rather than about 8 bytes, which is why a word is what the view is.
+/// At 64 bits that is 8 bytes and every unmanaged value up to that size is swapped where it
+/// lies; at 32 it is 4, and a wider value has neither the alignment nor the slack. ECMA-335
+/// I.12.6.2 aligns an 8-byte value only on the boundary a <c>native int</c> needs, and I.12.6.6
+/// grants atomicity only up to that same width, so there the 8-byte view would be both misaligned
 /// and torn.
 /// </para>
 /// <para>
-/// The eight byte integers are the exception, because the runtime already owes them more than ECMA
-/// requires: a field of type <see cref="Int64"/> or <see cref="UInt64"/> is seated on an eight byte
+/// The 8-byte integers are the exception, because the runtime already owes them more than ECMA
+/// requires: a field of type <see cref="Int64"/> or <see cref="UInt64"/> is seated on an 8-byte
 /// boundary wherever the hardware's instructions demand it, which is what lets
-/// <see cref="Interlocked"/> be applied to one on a thirty two bit runtime at all. Only through
-/// <see cref="Interlocked"/>, though — an eight byte <see cref="Volatile"/> read or write can tear
-/// there — so on that path the read is <see cref="Interlocked.Read(ref readonly Int64)"/> and the write is
-/// <see cref="Interlocked.Exchange(ref Int64, Int64)"/>. No other eight byte type joins them: the view
-/// has to be exact, there being no slack to zero, and the type's equality has to be its bits, this
-/// path having no tail to reconcile a miss with.
+/// <see cref="Interlocked"/> be applied to one on a 32-bit runtime at all. Only through
+/// <see cref="Interlocked"/>, though — an 8-byte <see cref="Volatile"/> read or write can tear
+/// there — so on that path the read is <see cref="Interlocked.Read(ref readonly Int64)"/> and the
+/// write is <see cref="Interlocked.Exchange(ref Int64, Int64)"/>. No other 8-byte type joins them:
+/// the view has to be the value exactly, and the type's equality has to be its bits.
 /// </para>
 /// <para>
 /// Adding a second field breaks both facts at once: the runtime is free to seat that field first, which
@@ -53,11 +52,11 @@ namespace NickStrupat;
 /// field and crosses to the other strategy.
 /// </para>
 /// <para>
-/// A reference is swapped through the object overloads, which keep the GC write barrier. Everything
-/// else — a value wider than a word, or one holding references — is guarded by a monitor on the cell,
-/// so readers block as well as writers. Locking on the instance means outside code holding a reference
-/// to this cell can interfere with it; the alternative, a private lock object, is a second field, which
-/// this design cannot afford.
+/// A reference is swapped through the object overloads, which keep the GC write barrier. Whatever none
+/// of the above covers — a value too wide for them, or one holding references — is guarded by a monitor
+/// on the cell, so readers block as well as writers. Locking on the instance means outside code holding
+/// a reference to this cell can interfere with it; the alternative, a private lock object, is a second
+/// field, which this design cannot afford.
 /// </para>
 /// </remarks>
 public sealed class Atomic<T>
@@ -113,8 +112,8 @@ public sealed class Atomic<T>
 	/// <remarks>
 	/// The size is measured against <see cref="IntPtr"/>.<see cref="IntPtr.Size"/> rather than against
 	/// eight, because the word is what the field's alignment and the object's minimum size are both
-	/// stated in. Both are constants to either compiler, so saying it costs nothing, and a sixty four bit
-	/// build reads exactly as it did when this said eight.
+	/// stated in. Both are constants to either compiler, so saying it costs nothing, and a 64-bit
+	/// build reads exactly as it did when this said 8.
 	/// </remarks>
 	private static Boolean FitsInWord
 	{
@@ -123,19 +122,19 @@ public sealed class Atomic<T>
 		       && Unsafe.SizeOf<T>() <= IntPtr.Size;
 	}
 
-	/// <summary>Gets a value indicating whether the value is an eight byte integer past the word.</summary>
+	/// <summary>Gets a value indicating whether the value is an 8-byte integer past the word.</summary>
 	/// <remarks>
 	/// <para>
 	/// <see cref="Int64"/> and <see cref="UInt64"/> earn a view the word does not cover, because a field
-	/// of either is seated on an eight byte boundary wherever the instructions require it — which is what
+	/// of either is seated on an 8-byte boundary wherever the instructions require it — which is what
 	/// makes them reachable by <see cref="Interlocked"/> there at all. Nothing here can establish that of
-	/// an arbitrary eight byte value, so nothing else is offered it.
+	/// an arbitrary 8-byte value, so nothing else is offered it.
 	/// </para>
 	/// <para>
 	/// Naming the two types rather than testing the size is also what keeps the compare-exchange on this
 	/// path honest without a tail. The view is exactly the value, so there is no slack to zero, and an
 	/// integer's equality is its bits, so a miss is a miss and there is nothing to ask the type about.
-	/// <see cref="Double"/> is eight bytes and is not here for the second reason, not the first.
+	/// <see cref="Double"/> is 8 bytes and is not here for the second reason, not the first.
 	/// </para>
 	/// </remarks>
 	private static Boolean IsEightByteIntegerOn32Bit

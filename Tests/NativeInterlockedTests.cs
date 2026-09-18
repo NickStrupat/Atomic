@@ -62,7 +62,7 @@ public class NativeInterlockedTests
 	[Fact]
 	public void Increment_WhenTheValueWraps_LeavesTheRestOfTheWordAlone()
 	{
-		// The instruction acts on four bytes of an eight byte word. If it carried into the bytes the
+		// The instruction acts on 4 bytes of an 8-byte word. If it carried into the bytes the
 		// cell keeps zeroed, the value would still read back correctly while every later comparison
 		// compared a bit pattern nothing could match. The exchange below is what proves it did not.
 		var atomic = new Atomic<Int32>(Int32.MaxValue);
@@ -207,7 +207,7 @@ public class NativeInterlockedTests
 	[Fact]
 	public void WhenTheCallerIsGeneric_TheRestOfTheWordIsStillLeftAlone()
 	{
-		// The specialisation hands a four byte instruction a reference into an eight byte field. An
+		// The specialisation hands a 4-byte instruction a reference into an 8-byte field. An
 		// overflow carrying into the bytes the cell keeps zeroed would read back correctly and fail every
 		// later comparison after it.
 		var atomic = new Atomic<Int32>(Int32.MaxValue);

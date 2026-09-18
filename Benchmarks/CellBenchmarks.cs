@@ -14,7 +14,7 @@ namespace Benchmarks;
 /// The categories are what decides a strategy, so they are what the comparison is organised around.
 /// A cell can hold a value in the word it already has, hold a reference in that word, or hold neither
 /// and need somewhere else to put it — and the awkward sizes are where the implementations first stop
-/// agreeing, because a three byte value is only swappable if a cell is laid out so it can be widened.
+/// agreeing, because a 3-byte value is only swappable if a cell is laid out so it can be widened.
 /// </para>
 /// <para>
 /// One generic class rather than one class per category: five copies differing in a type name is five

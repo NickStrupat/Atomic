@@ -17,13 +17,13 @@ public class StorageTests
 	/// <summary>What one box costs on this runtime, at its cheapest and its dearest.</summary>
 	/// <remarks>
 	/// <para>
-	/// This was written down as 32 — an object header plus a Decimal — until a thirty two bit runtime
-	/// disagreed. A Decimal wants an eight byte boundary and a four byte object header does not leave it
-	/// on one, so such a box is 28 bytes and the allocator puts a twelve byte filler in front of it to
+	/// This was written down as 32 — an object header plus a Decimal — until a 32-bit runtime
+	/// disagreed. A Decimal wants an 8-byte boundary and a 4-byte object header does not leave it
+	/// on one, so such a box is 28 bytes and the allocator puts a 12-byte filler in front of it to
 	/// seat it. 28 and 12 come to a multiple of eight, so the next one needs a filler too: measured on an
 	/// arm32 Pi, 40 bytes were charged for 19902 boxes out of 20000 and 28 for the rest, in no fixed
 	/// proportion. A class holding four Int32s is 24 bytes every single time, so this is the alignment
-	/// and not the header. At sixty four bits nothing is padded and both ends of this are 32.
+	/// and not the header. At 64 bits nothing is padded and both ends of this are 32.
 	/// </para>
 	/// <para>
 	/// So what the two tests below assert is the number of boxes and not a byte count: a band wide enough
@@ -45,8 +45,8 @@ public class StorageTests
 		Atomic<Colour>.IsLockFree.Should().BeTrue();
 		Atomic<String>.IsLockFree.Should().BeTrue();
 
-		// The eight byte integers are swapped in place at either width — through the word at sixty four
-		// bits, through Interlocked at thirty two, where the runtime seats a field of one of these two
+		// The 8-byte integers are swapped in place at either width — through the word at 64
+		// bits, through Interlocked at 32, where the runtime seats a field of one of these two
 		// types for the instructions that reach it. Double is the same size and is not offered that,
 		// because its equality is not its bits and the wide path has no tail to reconcile a miss with.
 		Atomic<Int64>.IsLockFree.Should().BeTrue();
@@ -54,7 +54,7 @@ public class StorageTests
 		Atomic<Double>.IsLockFree.Should().Be(wordIsEightBytes);
 
 		// A nullable reference is still just a reference, so it never needs the monitor. Nullable<Int32>
-		// is eight unmanaged bytes, so it fits the word only at sixty four bits. Both only compile since
+		// is 8 unmanaged bytes, so it fits the word only at 64 bits. Both only compile since
 		// T stopped requiring notnull.
 		Atomic<String?>.IsLockFree.Should().BeTrue();
 		Atomic<Int32?>.IsLockFree.Should().Be(wordIsEightBytes);
@@ -72,15 +72,15 @@ public class StorageTests
 
 		// A lone field begins on a word boundary, and the minimum size of an object leaves a whole word
 		// there, so a value of a size no instruction matches is widened to a word rather than locked. How
-		// many of these that covers is the width of the word: three bytes fit either one.
+		// many of these that covers is the width of the word: 3 bytes fit either one.
 		Atomic<Three>.IsLockFree.Should().BeTrue();
 		Atomic<Five>.IsLockFree.Should().Be(wordIsEightBytes);
 		Atomic<Six>.IsLockFree.Should().Be(wordIsEightBytes);
 		Atomic<Seven>.IsLockFree.Should().Be(wordIsEightBytes);
 
-		// Eight is two Int32 fields, so its own alignment is four. At sixty four bits the field it sits in
-		// is word aligned regardless, which is what the instruction actually needs. At thirty two nothing
-		// promises it an eight byte boundary — which is the case the wide path exists around, and why that
+		// Eight is two Int32 fields, so its own alignment is 4. At 64 bits the field it sits in
+		// is word aligned regardless, which is what the instruction actually needs. At 32 nothing
+		// promises it an 8-byte boundary — which is the case the wide path exists around, and why that
 		// path names Int64 and UInt64 rather than admitting everything of their size.
 		Unsafe.SizeOf<Eight>().Should().Be(sizeof(Int64));
 		Atomic<Eight>.IsLockFree.Should().Be(wordIsEightBytes);
@@ -156,7 +156,7 @@ public class StorageTests
 		FieldIsAlignedTo<Six>(IntPtr.Size).Should().BeTrue();
 		FieldIsAlignedTo<Seven>(IntPtr.Size).Should().BeTrue();
 
-		// Eight bytes with an alignment of four, the case that faulted on arm64 when a second field
+		// Eight bytes with an alignment of 4, the case that faulted on arm64 when a second field
 		// pushed it off a word boundary.
 		FieldIsAlignedTo<Eight>(IntPtr.Size).Should().BeTrue();
 	}
@@ -164,10 +164,10 @@ public class StorageTests
 	[Fact]
 	public void Atomic_SeatsAnEightByteIntegerForTheInstructionsThatReachIt()
 	{
-		// At sixty four bits this is the word claim over again. At thirty two it is a different promise,
+		// At 64 bits this is the word claim over again. At 32 it is a different promise,
 		// and the only reason Int64 and UInt64 are swapped in place there at all: a field of either is
-		// seated on an eight byte boundary wherever the hardware's instructions demand it, which is what
-		// lets Interlocked be pointed at one. Nothing establishes that of an arbitrary eight byte value —
+		// seated on an 8-byte boundary wherever the hardware's instructions demand it, which is what
+		// lets Interlocked be pointed at one. Nothing establishes that of an arbitrary 8-byte value —
 		// Eight, one row up, is the counterexample — so the wide path names these two and stops.
 		FieldIsAlignedTo<Int64>(sizeof(Int64)).Should().BeTrue();
 		FieldIsAlignedTo<UInt64>(sizeof(Int64)).Should().BeTrue();
@@ -219,7 +219,7 @@ public class StorageTests
 	}
 
 	[Theory]
-	// One field, laid out to fit T. A three byte value still gets a whole word of field area, which is
+	// One field, laid out to fit T. A 3-byte value still gets a whole word of field area, which is
 	// what makes widening it safe.
 	[InlineData(typeof(Atomic<Int32>), 8)]
 	[InlineData(typeof(Atomic<Three>), 8)]
@@ -229,7 +229,7 @@ public class StorageTests
 	[InlineData(typeof(BoxAtomic<Int32>), 16)]
 	[InlineData(typeof(BoxAtomic<String>), 16)]
 	[InlineData(typeof(BoxAtomic<Decimal>), 16)]
-	// One field plus the version counter. At sixty four bits the counter costs a word of its own for a T
+	// One field plus the version counter. At 64 bits the counter costs a word of its own for a T
 	// smaller than one — the instantiations that never read it — and disappears into padding for the wide
 	// ones that do.
 	[InlineData(typeof(SeqLockAtomic<Byte>), 16)]
@@ -239,7 +239,7 @@ public class StorageTests
 	public void TypeLayout_MatchesTheStrategy(Type type, Int32 expectedFieldBytes)
 	{
 		if (IntPtr.Size != sizeof(Int64))
-			Assert.Skip("these sizes are written down for a sixty four bit runtime");
+			Assert.Skip("these sizes are written down for a 64-bit runtime");
 
 		// The fields alone; the object header is another 16 bytes on top.
 		TypeLayout.GetLayout(type).Size.Should().Be(expectedFieldBytes);

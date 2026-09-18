@@ -1,7 +1,7 @@
 # Atomic
 
 A generic atomic cell for .NET. Lock-free and allocation-free for references and any unmanaged value up
-to a word — including the three, five, six and seven byte structs that no interlocked instruction
+to a word — including the 3-, 5-, 6- and 7-byte structs that no interlocked instruction
 matches. A monitor covers everything else, and `IsLockFree` tells you which one you got.
 
 ```
@@ -47,7 +47,7 @@ Atomic<Decimal>.IsLockFree   // false — 16 bytes, so the monitor
 
 ### Awkward sizes
 
-No processor has a three byte compare-and-swap, so a three byte struct would normally need a lock. It
+No processor has a 3-byte compare-and-swap, so a 3-byte struct would normally need a lock. It
 doesn't here. Because `storage` is the only field the class declares, it begins on a word boundary and
 the minimum size of an object leaves a whole word there — so the cell swaps the whole word and
 lets the slack ride along. Writes zero the slack, so a given value always has the same bit pattern and
@@ -57,10 +57,10 @@ That is why the class has exactly one field, and why it uses a monitor rather th
 for the values it cannot swap in place: a second field would let the runtime seat the value off a word
 boundary and take the trick away from every instantiation.
 
-Widening is not quite free, and it is lopsided. Reading a three byte value costs 0.79 ns against 0.56
+Widening is not quite free, and it is lopsided. Reading a 3-byte value costs 0.79 ns against 0.56
 for a full word, because the word is loaded once and the value taken out of it. Writing costs 1.52 ns
-against 0.40, because the value has to be put into a zeroed word first — three byte stores and an eight
-byte load of the same stack slot, which is a store-to-load forward the hardware cannot satisfy from the
+against 0.40, because the value has to be put into a zeroed word first — 3-byte stores and an 8-byte
+load of the same stack slot, which is a store-to-load forward the hardware cannot satisfy from the
 store buffer. Still cheaper than the 13 ns a lock would cost, which is the comparison that matters.
 
 ## Read-modify-write
@@ -178,8 +178,8 @@ flag.Write(true);                   use(data.Read());   // sees 42
 ```
 
 One exception runs the other way: on a 32-bit runtime an `Int64` or `UInt64` read and write are full
-fences rather than acquire and release, because a locked compare-exchange is the only way to move eight
-bytes indivisibly there. That is stronger than what is promised, so nothing that relies on the promise
+fences rather than acquire and release, because a locked compare-exchange is the only way to move 8 bytes
+indivisibly there. That is stronger than what is promised, so nothing that relies on the promise
 notices, but it is not free — don't read the 64-bit numbers below as covering it.
 
 It is not enough for a store to one cell followed by a load of another — the StoreLoad case, which is
@@ -247,8 +247,8 @@ instructions. The categories that separate them are the ones nothing can swap in
 - **`Decimal` and `Tagged` go to `BoxAtomic` for reads, by a wide margin.** A read is one load of a
   reference to an immutable box — 0.70 ns against 13.08 — and it allocates nothing. Its *write*
   advantage does not survive being charged for the collections it causes.
-- **`Three` is where `SeqLockAtomic` falls over.** It widens sizes of one, two, four and eight bytes and
-  sends everything else to the version counter, so a three byte write costs 9.14 ns against 1.41.
+- **`Three` is where `SeqLockAtomic` falls over.** It widens sizes of 1, 2, 4 and 8 bytes and
+  sends everything else to the version counter, so a 3-byte write costs 9.14 ns against 1.41.
 - **`Atomic<T>` ties wherever it is lock-free and trails wherever it locks** — on five of those six
   measurements; the sixth is a three-way tie at the cost of a monitor. That is the trade the library
   makes: it allocates nothing, ever, and pays a monitor for the values that do not fit its one field.
@@ -313,17 +313,17 @@ wide categories outright for reading; what it loses is the claim to be the cheap
 
 ## Requirements and limits
 
-**32-bit runtimes get a 32-bit word.** The widened view is a word, not eight bytes, because a word is
+**32-bit runtimes get a 32-bit word.** The widened view is a word, not 8 bytes, because a word is
 what the field's alignment and the object's minimum size are both stated in. ECMA-335 I.12.6.2 aligns a
 value on the boundary a `native int` needs and I.12.6.6 grants atomicity only up to that same width, so
-on x86, arm32 and wasm the word is four bytes: `Int32`, `Colour` and the three byte struct are swapped in
-place there exactly as they are at 64 bits, while `Double`, `Nullable<Int32>` and any five to eight byte
+on x86, arm32 and wasm the word is 4 bytes: `Int32`, `Colour` and the 3-byte struct are swapped in
+place there exactly as they are at 64 bits, while `Double`, `Nullable<Int32>` and any 5- to 8-byte
 struct take the monitor. `IsLockFree` reports which you got, per type and per runtime.
 
-`Int64` and `UInt64` are lock-free at either width, and they are the only eight byte types that are.
-A field of one of those two is seated on an eight byte boundary wherever the hardware's instructions
+`Int64` and `UInt64` are lock-free at either width, and they are the only 8-byte types that are.
+A field of one of those two is seated on an 8-byte boundary wherever the hardware's instructions
 demand it, which is what makes it reachable by `Interlocked` on a 32-bit runtime at all — but only by
-`Interlocked`: an eight byte `Volatile.Read` or `Volatile.Write` can tear there, so on that path the read
+`Interlocked`: an 8-byte `Volatile.Read` or `Volatile.Write` can tear there, so on that path the read
 is `Interlocked.Read` and the write is `Interlocked.Exchange`. Nothing else joins them. The view has to
 be the value exactly, since there is no slack to zero, and the type's equality has to be its bits, since
 a compare-exchange there has no tail to fall back on — which is what rules `Double` out, not its size.

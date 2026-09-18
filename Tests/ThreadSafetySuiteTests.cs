@@ -50,13 +50,13 @@ public class ThreadSafetySuiteTests
 	public void TheTearingCheck_WhenPointedAtAWriterThatStoresHalfAValueAtATime_SeesIt()
 	{
 		// Read_WhenWrittenConcurrently_NeverObservesAValueThatWasNeverWritten asserts an absence, and an
-		// absence is also what a check looking in the wrong place reports. Its eight byte integer row is
-		// the one that matters where the word is four bytes — which is not where this is developed, so
+		// absence is also what a check looking in the wrong place reports. Its 8-byte integer row is
+		// the one that matters where the word is 4 bytes — which is not where this is developed, so
 		// that row cannot be falsified by the machine that runs it and would sit there unexercised.
 		//
 		// NaiveAtomic is no use as the opposite case here. It stores an Int64 with one plain store, and
 		// whether that tears is the hardware's business: ECMA-335 I.12.6.6 permits it below a native int,
-		// but AArch32 on an ARMv8 core makes an eight byte aligned store single-copy atomic anyway, so a
+		// but AArch32 on an ARMv8 core makes an 8-byte aligned store single-copy atomic anyway, so a
 		// cell with no synchronisation at all can still come through clean. Demanding that it tear would
 		// be demanding the hardware be weak.
 		//
@@ -77,7 +77,7 @@ public class ThreadSafetySuiteTests
 	/// <returns><see langword="true"/> when the reader read an <see cref="Int64"/> whose halves disagreed.</returns>
 	/// <remarks>
 	/// The reader uses <see cref="Interlocked"/> so that anything it sees came from the writer. A plain
-	/// eight byte read is itself allowed to tear where the word is four bytes, and a check that cannot
+	/// 8-byte read is itself allowed to tear where the word is 4 bytes, and a check that cannot
 	/// say which side tore is a weaker one than this needs to be.
 	/// </remarks>
 	private static Boolean HalvesWereSeenToDisagree()
@@ -188,7 +188,7 @@ internal sealed class NaiveAtomic<T>(T initial) : IAtomic<T>
 }
 
 /// <summary>
-/// An eight byte integer written one half at a time, which no hardware can make atomic.
+/// An 8-byte integer written one half at a time, which no hardware can make atomic.
 /// </summary>
 /// <remarks>
 /// Both halves are given the same <see cref="Int32"/>, so a value whose halves disagree was read between
@@ -197,10 +197,10 @@ internal sealed class NaiveAtomic<T>(T initial) : IAtomic<T>
 /// </remarks>
 internal sealed class HalfWrittenInt64
 {
-	/// <summary>The value, and the only field, so that it is seated on an eight byte boundary.</summary>
+	/// <summary>The value, and the only field, so that it is seated on an 8-byte boundary.</summary>
 	private Int64 value;
 
-	/// <summary>Reads the whole eight bytes, indivisibly, at either word size.</summary>
+	/// <summary>Reads the whole 8 bytes, indivisibly, at either word size.</summary>
 	/// <returns>The value, which may have been assembled by the writer from two different stores.</returns>
 	public Int64 Read() => Interlocked.Read(ref value);
 

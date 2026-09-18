@@ -206,9 +206,9 @@ public abstract class ThreadSafetyTests
 		// strategy an implementation might pick: sizes it has to widen, a size that fits exactly, sizes
 		// too wide to swap, a struct holding a reference, and a bare reference.
 		//
-		// The eight byte integer is a strategy of its own wherever the word is four bytes, and is not
+		// The 8-byte integer is a strategy of its own wherever the word is 4 bytes, and is not
 		// covered by Eight, which is the same size and goes behind the monitor there. UInt64 takes the
-		// identical path and would be asserting this twice. Where the word is eight bytes this row is a
+		// identical path and would be asserting this twice. Where the word is 8 bytes this row is a
 		// formality, which is the point — the shapes are the same everywhere and the strategy under them
 		// is not.
 		const Int32 Distinct = 16;

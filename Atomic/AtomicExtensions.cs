@@ -26,14 +26,9 @@ namespace NickStrupat;
 /// <see cref="Atomic{T}.CompareExchange"/> to read, compare and store across an increment and drop it.
 /// So the six ask <c>Atomic&lt;T&gt;.IsInline</c> first, which folds with everything else and costs
 /// nothing; where it is false the loop below handles the type correctly, because the loop goes through
-/// the cell.
-/// </para>
-/// <para>
-/// At sixty four bits that gate is true for all four. At thirty two it is true for
-/// <see cref="Int32"/> and <see cref="UInt32"/>, which fit the word the cell swaps, and for
-/// <see cref="Int64"/> and <see cref="UInt64"/>, which the cell reaches with the same locked eight byte
-/// instructions this does. So the four keep their instruction at either width — which is the whole of
-/// why the gate names the cell's strategy rather than restating the word size.
+/// the cell. Naming the cell's strategy rather than restating a word size is what keeps that gate right
+/// when the strategy changes: all four types keep their instruction at 32 bits too, the smaller
+/// pair through the word and the larger through the same locked 8-byte instructions the cell uses.
 /// </para>
 /// <para>
 /// Getting at the instruction means getting a reference of the right type to the storage, and under
@@ -48,7 +43,7 @@ namespace NickStrupat;
 /// resolution and so got the instruction to anyone who named <c>Atomic&lt;Int64&gt;</c> outright. It
 /// could not help generic code, because overload resolution happens where the type is written down and
 /// there it is still a parameter — so every <c>T</c> paid for a loop. Specialising here covers both,
-/// and the closed set was two hundred lines saying the same thing a second time.
+/// and the closed set was 200 lines saying the same thing a second time.
 /// </para>
 /// <para>
 /// The values returned follow <see cref="Interlocked"/>, including where it is inconsistent:

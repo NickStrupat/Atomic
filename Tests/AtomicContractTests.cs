@@ -317,7 +317,7 @@ public abstract class AtomicContractTests
 		cell.Read().Value.Should().Be(2);
 	}
 
-	/// <summary>The eight bytes of a value, padding included.</summary>
+	/// <summary>The 8 bytes of a value, padding included.</summary>
 	/// <param name="value">The value to take the bits of.</param>
 	/// <returns>The bit pattern, which two equal values need not share.</returns>
 	private static Int64 WordOf(Padded value)
