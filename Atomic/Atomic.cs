@@ -74,8 +74,8 @@ public sealed class Atomic<T>
 	/// instruction for, which is why <see cref="AtomicExtensions"/> reaches for it only under a
 	/// <c>typeof</c> test naming one of those types — and only where <see cref="IsInline"/> says the cell
 	/// swaps that field itself rather than standing behind its monitor. The two agree at either word
-	/// size: an eight byte integer is <see cref="IsWideInteger"/> on a thirty two bit runtime, where the
-	/// cell reaches it with the same locked instructions the extension does.
+	/// size, <see cref="IsEightByteIntegerOn32Bit"/> being the case where the cell reaches the field with
+	/// the same locked instructions the extension does.
 	/// </remarks>
 	internal ref T Storage => ref storage;
 
@@ -106,7 +106,7 @@ public sealed class Atomic<T>
 	internal static Boolean IsInline
 	{
 		[MethodImpl(MethodImplOptions.AggressiveInlining)]
-		get => IsWord || IsWideInteger;
+		get => FitsInWord || IsEightByteIntegerOn32Bit;
 	}
 
 	/// <summary>Gets a value indicating whether the value fits the word the field is seated on.</summary>
@@ -116,21 +116,20 @@ public sealed class Atomic<T>
 	/// stated in. Both are constants to either compiler, so saying it costs nothing, and a sixty four bit
 	/// build reads exactly as it did when this said eight.
 	/// </remarks>
-	private static Boolean IsWord
+	private static Boolean FitsInWord
 	{
 		[MethodImpl(MethodImplOptions.AggressiveInlining)]
 		get => !RuntimeHelpers.IsReferenceOrContainsReferences<T>()
 		       && Unsafe.SizeOf<T>() <= IntPtr.Size;
 	}
 
-	/// <summary>Gets a value indicating whether the value is an eight byte integer wider than the word.</summary>
+	/// <summary>Gets a value indicating whether the value is an eight byte integer past the word.</summary>
 	/// <remarks>
 	/// <para>
-	/// True only on a thirty two bit runtime, and only for <see cref="Int64"/> and <see cref="UInt64"/>.
-	/// Those two earn a view the word does not cover, because a field of either is seated on an eight byte
-	/// boundary wherever the instructions require it — which is what makes them reachable by
-	/// <see cref="Interlocked"/> there at all. Nothing here can establish that of an arbitrary eight byte
-	/// value, so nothing else is offered it.
+	/// <see cref="Int64"/> and <see cref="UInt64"/> earn a view the word does not cover, because a field
+	/// of either is seated on an eight byte boundary wherever the instructions require it — which is what
+	/// makes them reachable by <see cref="Interlocked"/> there at all. Nothing here can establish that of
+	/// an arbitrary eight byte value, so nothing else is offered it.
 	/// </para>
 	/// <para>
 	/// Naming the two types rather than testing the size is also what keeps the compare-exchange on this
@@ -139,7 +138,7 @@ public sealed class Atomic<T>
 	/// <see cref="Double"/> is eight bytes and is not here for the second reason, not the first.
 	/// </para>
 	/// </remarks>
-	private static Boolean IsWideInteger
+	private static Boolean IsEightByteIntegerOn32Bit
 	{
 		[MethodImpl(MethodImplOptions.AggressiveInlining)]
 		get => IntPtr.Size < sizeof(Int64)
@@ -158,8 +157,8 @@ public sealed class Atomic<T>
 	/// <returns>The bits of the value, zero extended to the width of the view.</returns>
 	/// <remarks>
 	/// The caller owes this a <typeparamref name="TView"/> at least as wide as <typeparamref name="T"/>,
-	/// which both strategies establish before they get here: <see cref="IsWord"/> measures the size
-	/// against the view, and <see cref="IsWideInteger"/> names two types the view is exactly.
+	/// which both strategies establish before they get here: <see cref="FitsInWord"/> measures the size
+	/// against the view, and <see cref="IsEightByteIntegerOn32Bit"/> names two types the view is exactly.
 	/// </remarks>
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	private static TView Widen<TView>(T value) where TView : unmanaged
@@ -182,9 +181,9 @@ public sealed class Atomic<T>
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public T Read()
 	{
-		if (IsWord)
+		if (FitsInWord)
 			return Narrow(Volatile.Read(ref Unsafe.As<T, IntPtr>(ref storage)));
-		if (IsWideInteger)
+		if (IsEightByteIntegerOn32Bit)
 			return Narrow(Interlocked.Read(ref Unsafe.As<T, Int64>(ref storage)));
 		if (IsReference)
 		{
@@ -201,9 +200,9 @@ public sealed class Atomic<T>
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public void Write(T value)
 	{
-		if (IsWord)
+		if (FitsInWord)
 			Volatile.Write(ref Unsafe.As<T, IntPtr>(ref storage), Widen<IntPtr>(value));
-		else if (IsWideInteger)
+		else if (IsEightByteIntegerOn32Bit)
 			Interlocked.Exchange(ref Unsafe.As<T, Int64>(ref storage), Widen<Int64>(value));
 		else if (IsReference)
 			Volatile.Write(ref Unsafe.As<T, Object?>(ref storage), value);
@@ -217,9 +216,9 @@ public sealed class Atomic<T>
 	/// <returns>The value held before the call.</returns>
 	public T Exchange(T value)
 	{
-		if (IsWord)
+		if (FitsInWord)
 			return Narrow(Interlocked.Exchange(ref Unsafe.As<T, IntPtr>(ref storage), Widen<IntPtr>(value)));
-		if (IsWideInteger)
+		if (IsEightByteIntegerOn32Bit)
 			return Narrow(Interlocked.Exchange(ref Unsafe.As<T, Int64>(ref storage), Widen<Int64>(value)));
 		if (IsReference)
 		{
@@ -272,7 +271,7 @@ public sealed class Atomic<T>
 	/// </remarks>
 	public Boolean TryCompareExchange(T value, T comparand, out T previous)
 	{
-		if (IsWord)
+		if (FitsInWord)
 		{
 			ref var slot = ref Unsafe.As<T, IntPtr>(ref storage);
 			var comparandWord = Widen<IntPtr>(comparand);
@@ -287,11 +286,11 @@ public sealed class Atomic<T>
 			return TryCompareExchangeEqualValue(ref slot, value, comparand, previousWord, out previous);
 		}
 
-		if (IsWideInteger)
+		if (IsEightByteIntegerOn32Bit)
 		{
 			// No tail, because an integer's equality is its bits: a miss here is a genuine mismatch, not
-			// a comparison the instruction was the wrong tool for. See IsWideInteger for why nothing
-			// wider joins it on this path.
+			// a comparison the instruction was the wrong tool for. See the property for why nothing else
+			// of this width joins it on the path.
 			var comparandBits = Widen<Int64>(comparand);
 			ref var slot = ref Unsafe.As<T, Int64>(ref storage);
 			var previousBits = Interlocked.CompareExchange(ref slot, Widen<Int64>(value), comparandBits);

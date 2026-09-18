@@ -39,8 +39,8 @@ object would be that second field) and why the alignment claim is asserted by a 
 address, not by a runtime check. `StorageTests` holds the line; do not add a field to make something
 convenient.
 
-**Every strategy term must fold to a constant.** `IsWord` / `IsWideInteger` / `IsReference` — and
-`IsInline`, which is the first two — are built only from `typeof(T)`,
+**Every strategy term must fold to a constant.** `FitsInWord` / `IsEightByteIntegerOn32Bit` /
+`IsReference` — and `IsInline`, which is the first two — are built only from `typeof(T)`,
 `RuntimeHelpers.IsReferenceOrContainsReferences<T>()`, `Unsafe.SizeOf<T>()` and `IntPtr.Size`. One term
 NativeAOT cannot evaluate keeps the monitor path live, drags a `try`/`finally` in, and pushes the method
 past the inlining budget. `CodegenTests` is the only test that would notice.
@@ -48,12 +48,12 @@ past the inlining budget. `CodegenTests` is the only test that would notice.
 **The widened view is a word, and the word is `IntPtr.Size`.** Not eight bytes — a word is what the
 field's alignment and the object's minimum size are both stated in, so writing it this way is what makes
 the trick hold at 32 bits instead of surrendering every value type to the monitor there. `Widen<TView>` /
-`Narrow<TView>` are generic over the view for this: `IntPtr` for `IsWord`, `Int64` for `IsWideInteger`.
+`Narrow<TView>` are generic over the view for this: `IntPtr` for `FitsInWord`, `Int64` for the other.
 The caller owes them a view at least as wide as `T`, which both terms establish before reaching them —
 `Widen` writes `sizeof(T)` bytes into it and will run off the end of a narrower one.
 
-**`Int64` and `UInt64` are named, not measured, on the wide path.** `IsWideInteger` is those two types by
-name and a 32-bit runtime, and it may not be loosened to "eight unmanaged bytes". Three separate things
+**`Int64` and `UInt64` are named, not measured, on the wide path.** `IsEightByteIntegerOn32Bit` is
+those two types by name, and may not be loosened to "eight unmanaged bytes". Three separate things
 would break: the runtime seats a field of *these* types on an 8-byte boundary for the instructions that
 reach it and promises nothing of the sort for `Eight` (two `Int32`s); the view has to be the value exactly,
 there being no slack to zero at that width; and the path has no `TryCompareExchangeEqualValue` tail, which
