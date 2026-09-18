@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using NickStrupat;
 
 namespace Tests;
@@ -22,6 +23,9 @@ public class ThreadSafetySuiteTests
 	/// <summary>How many times a property may fail to catch the broken cell before that is a verdict.</summary>
 	private const Int32 Attempts = 5;
 
+	/// <summary>How long the half-written writer is raced against a reader, per attempt.</summary>
+	private static readonly TimeSpan Window = TimeSpan.FromMilliseconds(250);
+
 	[Fact]
 	public void TheSuite_WhenPointedAtACellThatIsNotThreadSafe_Fails()
 	{
@@ -40,6 +44,70 @@ public class ThreadSafetySuiteTests
 		// And again where the comparand is equal without being identical, which is the path that has to
 		// retry rather than report a mismatch. The window is the same one, and just as wide.
 		MustCatch(unsafeCell.CompareExchange_WhenTheComparandIsEqualButNotIdentical_StillLetsExactlyOneWin);
+	}
+
+	[Fact]
+	public void TheTearingCheck_WhenPointedAtAWriterThatStoresHalfAValueAtATime_SeesIt()
+	{
+		// Read_WhenWrittenConcurrently_NeverObservesAValueThatWasNeverWritten asserts an absence, and an
+		// absence is also what a check looking in the wrong place reports. Its eight byte integer row is
+		// the one that matters where the word is four bytes — which is not where this is developed, so
+		// that row cannot be falsified by the machine that runs it and would sit there unexercised.
+		//
+		// NaiveAtomic is no use as the opposite case here. It stores an Int64 with one plain store, and
+		// whether that tears is the hardware's business: ECMA-335 I.12.6.6 permits it below a native int,
+		// but AArch32 on an ARMv8 core makes an eight byte aligned store single-copy atomic anyway, so a
+		// cell with no synchronisation at all can still come through clean. Demanding that it tear would
+		// be demanding the hardware be weak.
+		//
+		// So the check is pointed at a writer that cannot be atomic on any hardware: two Int32 stores,
+		// one per half. Nothing able to see a half-written Int64 can miss this one, which is what makes
+		// the absence above worth reading.
+		//
+		// Attempts rather than a single run, for the reason MustCatch gives below.
+		for (var attempt = 0; attempt < Attempts; attempt++)
+			if (HalvesWereSeenToDisagree())
+				return;
+
+		Assert.Fail($"an Int64 written one half at a time was read across {Attempts} windows without a "
+			+ "single half-written value being seen; the tearing check can no longer see one.");
+	}
+
+	/// <summary>Races a half-at-a-time writer against a reader for one <see cref="Window"/>.</summary>
+	/// <returns><see langword="true"/> when the reader read an <see cref="Int64"/> whose halves disagreed.</returns>
+	/// <remarks>
+	/// The reader uses <see cref="Interlocked"/> so that anything it sees came from the writer. A plain
+	/// eight byte read is itself allowed to tear where the word is four bytes, and a check that cannot
+	/// say which side tore is a weaker one than this needs to be.
+	/// </remarks>
+	private static Boolean HalvesWereSeenToDisagree()
+	{
+		var cell = new HalfWrittenInt64();
+		using var cancellation = new CancellationTokenSource(Window);
+		var disagreed = false;
+
+		var writer = new Thread(() =>
+		{
+			for (var i = 0; !cancellation.IsCancellationRequested; i++)
+				cell.Write(i);
+		}) { IsBackground = true };
+
+		var reader = new Thread(() =>
+		{
+			while (!cancellation.IsCancellationRequested)
+			{
+				var value = cell.Read();
+				if ((Int32)(value >> 32) != (Int32)value)
+					disagreed = true;
+			}
+		}) { IsBackground = true };
+
+		writer.Start();
+		reader.Start();
+		writer.Join();
+		reader.Join();
+
+		return disagreed;
 	}
 
 	/// <summary>Runs <paramref name="property"/> until it fails, and requires that it does.</summary>
@@ -116,6 +184,33 @@ internal sealed class NaiveAtomic<T>(T initial) : IAtomic<T>
 			return false;
 		this.value = value;
 		return true;
+	}
+}
+
+/// <summary>
+/// An eight byte integer written one half at a time, which no hardware can make atomic.
+/// </summary>
+/// <remarks>
+/// Both halves are given the same <see cref="Int32"/>, so a value whose halves disagree was read between
+/// the two stores. Which half is written first does not matter and is never asked, so this says nothing
+/// about byte order and does not need to.
+/// </remarks>
+internal sealed class HalfWrittenInt64
+{
+	/// <summary>The value, and the only field, so that it is seated on an eight byte boundary.</summary>
+	private Int64 value;
+
+	/// <summary>Reads the whole eight bytes, indivisibly, at either word size.</summary>
+	/// <returns>The value, which may have been assembled by the writer from two different stores.</returns>
+	public Int64 Read() => Interlocked.Read(ref value);
+
+	/// <summary>Writes <paramref name="half"/> into both halves, as two separate stores.</summary>
+	/// <param name="half">The value to put in each half.</param>
+	public void Write(Int32 half)
+	{
+		ref var first = ref Unsafe.As<Int64, Int32>(ref value);
+		Volatile.Write(ref first, half);
+		Volatile.Write(ref Unsafe.Add(ref first, 1), half);
 	}
 }
 

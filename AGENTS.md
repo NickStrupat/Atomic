@@ -27,7 +27,7 @@ dotnet run -c Release --project Benchmarks -- contention
 dotnet run -c Release --project Benchmarks -- gc
 ```
 
-Release is 131 tests; Debug is 127 + 4 skipped. Zero warnings is the standing state — keep it, because
+Release is 132 tests; Debug is 128 + 4 skipped. Zero warnings is the standing state — keep it, because
 `GenerateDocumentationFile` is on and it is what catches a `cref` to something you just deleted.
 
 ## Invariants

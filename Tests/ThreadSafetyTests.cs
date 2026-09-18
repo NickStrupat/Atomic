@@ -205,9 +205,16 @@ public abstract class ThreadSafetyTests
 		// disagree is a value nobody wrote — a read that caught a write half done. The shapes cover each
 		// strategy an implementation might pick: sizes it has to widen, a size that fits exactly, sizes
 		// too wide to swap, a struct holding a reference, and a bare reference.
+		//
+		// The eight byte integer is a strategy of its own wherever the word is four bytes, and is not
+		// covered by Eight, which is the same size and goes behind the monitor there. UInt64 takes the
+		// identical path and would be asserting this twice. Where the word is eight bytes this row is a
+		// formality, which is the point — the shapes are the same everywhere and the strategy under them
+		// is not.
 		const Int32 Distinct = 16;
 		var texts = Enumerable.Range(0, Distinct).Select(i => new String((Char)('a' + i), 1)).ToArray();
 
+		var integer = Create(0L);
 		var three = Create(new Three(0, 0, 0));
 		var seven = Create(new Seven(0, 0, 0, 0, 0, 0, 0));
 		var eight = Create(new Eight(0, 0));
@@ -227,6 +234,7 @@ public abstract class ThreadSafetyTests
 				{
 					var b = (Byte)i;
 					var slot = i % Distinct;
+					integer.Write(((Int64)i << 32) | (UInt32)i);
 					three.Write(new(b, b, b));
 					seven.Write(new(b, b, b, b, b, b, b));
 					eight.Write(new(i, i));
@@ -241,6 +249,10 @@ public abstract class ThreadSafetyTests
 				Span<Int32> bits = stackalloc Int32[4];
 				while (!cancellation.IsCancellationRequested)
 				{
+					var n = integer.Read();
+					if ((Int32)(n >> 32) != (Int32)n)
+						torn.Enqueue($"Int64 {n:x16}");
+
 					var a = three.Read();
 					if (a.B != a.A || a.C != a.A)
 						torn.Enqueue($"Three {a}");
