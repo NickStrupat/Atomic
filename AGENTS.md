@@ -27,7 +27,7 @@ dotnet run -c Release --project Benchmarks -- contention
 dotnet run -c Release --project Benchmarks -- gc
 ```
 
-Release is 132 tests; Debug is 128 + 4 skipped. Zero warnings is the standing state — keep it, because
+Release is 131 tests; Debug is 127 + 4 skipped. Zero warnings is the standing state — keep it, because
 `GenerateDocumentationFile` is on and it is what catches a `cref` to something you just deleted.
 
 The 32-bit strategies are only exercised on real 32-bit hardware — an arm32 Raspberry Pi 3B on the
@@ -43,7 +43,7 @@ tar -czf - -C Tests/bin/Release/net10.0/linux-arm publish | ssh pi@raspberrypi3.
 ssh pi@raspberrypi3.local 'cd atomic && chmod +x Tests CodegenProbe && ./Tests'
 ```
 
-132 there too, 14 skipped: the 11 `TypeLayout` rows, the two arm64 mnemonic assertions, and the
+131 there too, 14 skipped: the 11 `TypeLayout` rows, the two arm64 mnemonic assertions, and the
 NativeAOT leg, since ILC does not target 32-bit `linux-arm`. `TheStorageStrategyIsChosenWhenTheJitCompilesTheCell`
 does run there and passes. Do not build on the device — it has 1 GB of RAM.
 
@@ -90,7 +90,7 @@ better and they make two spellings of one thing. `NativeInterlockedTests` assert
 
 **Six operations specialise:** `Add`, `Subtract`, `Increment`, `Decrement`, `And`, `Or`, each over
 `Int32`/`Int64`/`UInt32`/`UInt64`. `Subtract` adds the negation (`unchecked(-x)`, `unchecked(0U - x)`).
-`Xor`, `Max`, `Min` and `Update` stay compare-exchange loops — see below.
+`Xor`, `Max` and `Min` stay compare-exchange loops — see below.
 
 **A specialisation is gated on the cell's own strategy, not just on `typeof(T)`.** Each of the six asks
 `Atomic<T>.IsInline` before issuing the instruction, which is why that property is `internal` rather than

@@ -74,17 +74,6 @@ public class AtomicExtensionsTests
 	}
 
 	[Fact]
-	public void Update_WhenCalled_AppliesTheFunctionAndReturnsWhatItStored()
-	{
-		var cell = new Atomic<String>("a");
-		cell.Update(current => current + "b").Should().Be("ab");
-		cell.Read().Should().Be("ab");
-
-		cell.Update("c", (suffix, current) => current + suffix).Should().Be("abc");
-		cell.Read().Should().Be("abc");
-	}
-
-	[Fact]
 	public async Task Increment_WhenContended_LosesNoUpdates()
 	{
 		var inline = new Atomic<Int64>(0L);

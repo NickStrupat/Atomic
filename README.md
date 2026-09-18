@@ -68,17 +68,11 @@ store buffer. Still cheaper than the 13 ns a lock would cost, which is the compa
 Generic, over any `T` with the matching operator, via a compare-and-swap loop:
 
 ```csharp
-Add  Subtract  Increment  Decrement  And  Or  Xor  Max  Min  Update
+Add  Subtract  Increment  Decrement  And  Or  Xor  Max  Min
 ```
 
 Return values follow `Interlocked`, inconsistencies included: `Add`, `Subtract`, `Increment` and
 `Decrement` return the **new** value; `And`, `Or` and `Xor` return the **old** one.
-
-`Update` takes a function, with an overload that threads state through so the delegate needn't capture:
-
-```csharp
-history.Update(entry, static (e, current) => current.Add(e));
-```
 
 For `Atomic<Int32>`, `Atomic<Int64>`, `Atomic<UInt32>` and `Atomic<UInt64>`, `Increment`, `Decrement`,
 `Add`, `Subtract`, `And` and `Or` issue the instruction directly with no loop. You don't opt in: the
@@ -88,13 +82,12 @@ is the loop with nothing in front of it either. `Subtract` adds the negation, th
 interlocked subtract — one extra instruction, and it wraps correctly even for the value whose negation
 is itself an overflow.
 
-`Xor`, `Max`, `Min` and `Update` stay loops for every `T`. arm64 has a single instruction for the first
+`Xor`, `Max` and `Min` stay loops for every `T`. arm64 has a single instruction for the first
 three — `ldeoral`, `ldsmaxal`, `ldsminal` — and nothing reaches them from C#: `Interlocked` has
 no `Xor`, `Max` or `Min`, and `System.Runtime.Intrinsics.Arm` exposes no atomics at all, only
 `AdvSimd`, `ArmBase`, `Crc32`, `Dp`, `Rdm`, the crypto sets and `Sve`. The JIT emits those instructions
 solely when lowering `Interlocked`, which never asks for them. x86 would want the loop regardless,
-having no fetch-and-xor to speak of, and `Update` takes a function so it was never going to be one
-instruction.
+having no fetch-and-xor to speak of.
 
 Specialising inside the method rather than declaring overloads on the concrete types is what makes this
 reach generic code. Overload resolution happens where the type is written down, and here it isn't:

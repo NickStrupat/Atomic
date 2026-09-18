@@ -53,56 +53,6 @@ namespace NickStrupat;
 /// </remarks>
 public static class AtomicExtensions
 {
-	/// <summary>Applies <paramref name="update"/> to the value until it lands.</summary>
-	/// <typeparam name="T">The type of the value held by the cell.</typeparam>
-	/// <param name="atomic">The cell to update.</param>
-	/// <param name="update">
-	/// Produces the new value from the current one. It may run more than once, so it should be cheap
-	/// and free of side effects.
-	/// </param>
-	/// <returns>The value stored.</returns>
-	/// <exception cref="ArgumentNullException"><paramref name="atomic"/> or <paramref name="update"/> is null.</exception>
-	public static T Update<T>(this Atomic<T> atomic, Func<T, T> update)
-	{
-		ArgumentNullException.ThrowIfNull(atomic);
-		ArgumentNullException.ThrowIfNull(update);
-
-		var current = atomic.Read();
-		while (true)
-		{
-			var next = update(current);
-			if (atomic.TryCompareExchange(next, current, out var previous))
-				return next;
-			current = previous;
-		}
-	}
-
-	/// <summary>Applies <paramref name="update"/> to the value until it lands, without capturing.</summary>
-	/// <typeparam name="TState">The type of the state handed to <paramref name="update"/>.</typeparam>
-	/// <typeparam name="T">The type of the value held by the cell.</typeparam>
-	/// <param name="atomic">The cell to update.</param>
-	/// <param name="state">Handed to <paramref name="update"/> on every attempt.</param>
-	/// <param name="update">
-	/// Produces the new value from the state and the current value. It may run more than once, so it
-	/// should be cheap and free of side effects.
-	/// </param>
-	/// <returns>The value stored.</returns>
-	/// <exception cref="ArgumentNullException"><paramref name="atomic"/> or <paramref name="update"/> is null.</exception>
-	public static T Update<TState, T>(this Atomic<T> atomic, TState state, Func<TState, T, T> update)
-	{
-		ArgumentNullException.ThrowIfNull(atomic);
-		ArgumentNullException.ThrowIfNull(update);
-
-		var current = atomic.Read();
-		while (true)
-		{
-			var next = update(state, current);
-			if (atomic.TryCompareExchange(next, current, out var previous))
-				return next;
-			current = previous;
-		}
-	}
-
 	/// <summary>Adds <paramref name="addend"/> to the value.</summary>
 	/// <typeparam name="T">The type of the value held by the cell.</typeparam>
 	/// <param name="atomic">The cell to add to.</param>
