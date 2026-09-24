@@ -10,11 +10,12 @@
     </PropertyGroup>
 
     <PropertyGroup>
+        <GeneratePackageOnBuild Condition="'$(Configuration)' == 'Release'">true</GeneratePackageOnBuild>
         <PackageId>NickStrupat.Atomic</PackageId>
         <Version>0.1.0</Version>
         <Authors>Nick Strupat</Authors>
         <Copyright>Copyright © 2026 Nick Strupat</Copyright>
-        <Description>A generic atomic cell for .NET. Lock-free and allocation-free for references and for any unmanaged value up to a machine word, including the 3-, 5-, 6- and 7-byte structs that no interlocked instruction matches. Values too wide to swap in place fall back to a monitor, and Atomic&lt;T&gt;.IsLockFree reports which one you got.</Description>
+        <Description>A generic atomic cell for .NET. Read, Write and Exchange allocate nothing, for any T. Lock-free for references and any unmanaged value up to a machine word, including the 3-, 5-, 6- and 7-byte structs that no interlocked instruction matches — everything else takes a monitor instead, and Atomic&lt;T&gt;.IsLockFree reports which one you got.</Description>
         <PackageTags>atomic;interlocked;lock-free;concurrency;threading;thread-safety;compare-exchange;cas;volatile;memory-model</PackageTags>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
         <PackageReadmeFile>README.md</PackageReadmeFile>

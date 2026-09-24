@@ -1,8 +1,9 @@
 # Atomic
 
-A generic atomic cell for .NET. Lock-free and allocation-free for references and any unmanaged value up
-to a word — including the 3-, 5-, 6- and 7-byte structs that no interlocked instruction
-matches. A monitor covers everything else, and `IsLockFree` tells you which one you got.
+A generic atomic cell for .NET. `Read`, `Write` and `Exchange` allocate nothing, for any `T`. Lock-free
+for references and any unmanaged value up to a word — including the 3-, 5-, 6- and 7-byte structs that no
+interlocked instruction matches — everything else takes a monitor instead, and `IsLockFree` tells you
+which one you got.
 
 ```
 dotnet add package NickStrupat.Atomic
@@ -82,6 +83,17 @@ is the loop with nothing in front of it either. `Subtract` adds the negation, th
 interlocked subtract — one extra instruction, and it wraps correctly even for the value whose negation
 is itself an overflow.
 
+Enums reach `And`, `Or` and `Xor` through `AtomicEnumExtensions`, which is a separate class because
+constraints are not part of a signature — an enum implements no interfaces and so satisfies none of the
+operator constraints above. You still write `cell.Or(flag)`; the constraints pick the one that applies.
+`And` and `Or` take the instruction at every width an enum can be, a 1- or 2-byte one masked through the
+same word a wider one uses. Only `Xor` is a loop, there being no interlocked exclusive or to reach.
+
+```csharp
+var access = new Atomic<Access>(Access.Read);
+access.Or(Access.Write);       // returns the old value, as And, Or and Xor do
+```
+
 `Xor`, `Max` and `Min` stay loops for every `T`. arm64 has a single instruction for the first
 three — `ldeoral`, `ldsmaxal`, `ldsminal` — and nothing reaches them from C#: `Interlocked` has
 no `Xor`, `Max` or `Min`, and `System.Runtime.Intrinsics.Arm` exposes no atomics at all, only
@@ -144,6 +156,23 @@ A value type holding references is still a value type, so its own `Equals` decid
 treats the references inside it. `record struct Tagged(Int32 Number, String Text)` compares its `String`
 by value, because that is what the `Equals` the compiler wrote does. "Identity and nothing else" governs
 `Atomic<SomeClass>`; past that the struct decides, and there is no way to overrule it from here.
+
+**A struct with neither `Equals` nor `IEquatable<T>` can allocate on a miss.** `EqualityComparer<T>.Default`
+for such a type is `ObjectEqualityComparer<T>`, which boxes both sides to reach `Object.Equals`. The cell
+tries bits first, so a hit — every successful compare-exchange, the common case in a retry loop — never
+reaches it; only a miss does, and it costs the same whether the type fits the word or not:
+
+```csharp
+struct Plain { public Int32 A, B, C; }               // no Equals override, no IEquatable<T>
+
+var cell = new Atomic<Plain>(new Plain { A = 1 });
+cell.CompareExchange(new Plain { A = 1 }, new Plain { A = 1 });   // hit: 0 bytes, bits matched
+cell.CompareExchange(new Plain { A = 9 }, new Plain { A = 7 });   // miss: 64 bytes, Equals was asked
+```
+
+`record struct` and anything implementing `IEquatable<T>` are unaffected — the comparer the compiler
+writes never boxes. `Read`, `Write` and `Exchange` never call `Equals` and never allocate, whatever `T`
+is; this is specific to a losing `CompareExchange` or `TryCompareExchange` against a type with neither.
 
 **Success cannot be inferred from the returned value, so ask.** The cell compares with `Equals`, and a
 caller reaching for `==` does not:

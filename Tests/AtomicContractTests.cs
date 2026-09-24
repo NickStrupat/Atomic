@@ -257,7 +257,9 @@ public abstract class AtomicContractTests
 		// The cell compares with Equals, and Equals says a NaN is a NaN, so this stores. Saying so is the
 		// whole point of this method: a caller judging success by comparing the value it got back reads
 		// the swap it just made as a failure, retries, and stores twice.
+#pragma warning disable CS1718 // comparing NaN with itself is the point
 		(Double.NaN == Double.NaN).Should().BeFalse();
+#pragma warning restore CS1718
 		Double.NaN.Equals(Double.NaN).Should().BeTrue();
 
 		var nan = Create(Double.NaN);

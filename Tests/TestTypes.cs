@@ -6,6 +6,22 @@ namespace Tests;
 /// <summary>Unmanaged and narrower than a word, so it is stored inline.</summary>
 public enum Colour : Byte { Red, Green, Blue }
 
+/// <summary>Flags backed by the default <see cref="Int32"/>, which an interlocked instruction covers.</summary>
+[Flags]
+public enum Access { None = 0, Read = 1, Write = 2, Execute = 4 }
+
+/// <summary>Flags 8 bytes wide, the other width an instruction covers.</summary>
+[Flags]
+public enum WideAccess : UInt64 { None = 0, Read = 1, Write = 2, Reserved = 1UL << 40 }
+
+/// <summary>Flags 2 bytes wide, narrower than any interlocked instruction.</summary>
+[Flags]
+public enum MidAccess : UInt16 { None = 0, Read = 1, Write = 2, Execute = 4, High = 1 << 15 }
+
+/// <summary>Flags 1 byte wide, the narrowest an enum can be.</summary>
+[Flags]
+public enum NarrowAccess : Byte { None = 0, Read = 1, Write = 2, Execute = 4 }
+
 /// <summary>Exactly one word wide and holding no references, so it is stored inline.</summary>
 public readonly record struct Eight(Int32 A, Int32 B);
 
@@ -222,4 +238,31 @@ public readonly struct WideUnreflexive(Double value)
 	/// <returns>A value holding the sum.</returns>
 	public static WideUnreflexive operator +(WideUnreflexive left, WideUnreflexive right) =>
 		new(left.Value + right.Value);
+}
+
+/// <summary>
+/// A plain struct with no <see cref="Equals(Object)"/> override and no <see cref="IEquatable{T}"/>, so
+/// <see cref="EqualityComparer{T}.Default"/> falls back to <c>ObjectEqualityComparer&lt;T&gt;</c>, which
+/// boxes both sides to reach <see cref="ValueType.Equals(Object)"/>.
+/// </summary>
+public struct NoEquatable
+{
+	/// <summary>The only field, and the reason two values compare unequal.</summary>
+	public Int32 Value;
+}
+
+/// <summary>
+/// <see cref="NoEquatable"/> past the word, for the same reason <see cref="WideTolerance"/> exists
+/// beside <see cref="Tolerance"/>: the boxing this pair exists to catch happens at either width.
+/// </summary>
+public struct WideNoEquatable
+{
+	/// <summary>The first word. <see cref="ValueType.Equals(Object)"/> compares all three.</summary>
+	public Int64 A;
+
+	/// <summary>The second word, compared like the first: nothing here is ignored by equality.</summary>
+	public Int64 B;
+
+	/// <summary>The third word, which pushes the type past the word and onto the monitor.</summary>
+	public Int64 C;
 }

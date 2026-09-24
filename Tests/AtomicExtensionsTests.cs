@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using AwesomeAssertions;
 using NickStrupat;
 
@@ -94,4 +95,86 @@ public class AtomicExtensionsTests
 
 	private static Task RunOnAllThreads(Action action) =>
 		Task.WhenAll(Enumerable.Range(0, Threads).Select(_ => Task.Run(action)));
+
+	[Fact]
+	public void BitwiseOperations_WhenTheValueIsAnEnum_ApplyToItAtEveryWidth()
+	{
+		// An enum implements no interfaces, so it reaches none of the operator-constrained extensions.
+		// All four widths an enum can be: the two an instruction exists for outright, and the two
+		// narrower than any of them, which are masked through the word the cell keeps them in. The high
+		// bit of MidAccess goes into an Or mask because a 2-byte mask sign extended rather than zero
+		// extended would set bits in the slack there; And cannot, since anding the sign bits into a zero
+		// slack leaves it zero. Nothing read out of the cell can show that either — Read and the old values
+		// returned both narrow the word, and a compare-exchange that misses on the slack falls back to
+		// Equals and succeeds anyway — so the narrow two check the word itself after every operation.
+		var wide = new Atomic<WideAccess>(WideAccess.Read);
+		wide.Or(WideAccess.Reserved).Should().Be(WideAccess.Read, "these return the old value");
+		wide.Read().Should().Be(WideAccess.Read | WideAccess.Reserved);
+		wide.And(WideAccess.Reserved).Should().Be(WideAccess.Read | WideAccess.Reserved);
+		wide.Read().Should().Be(WideAccess.Reserved);
+
+		var word = new Atomic<Access>(Access.Read);
+		word.Or(Access.Write).Should().Be(Access.Read);
+		word.Read().Should().Be(Access.Read | Access.Write);
+		word.And(Access.Write).Should().Be(Access.Read | Access.Write);
+		word.Read().Should().Be(Access.Write);
+		word.Xor(Access.Write | Access.Execute).Should().Be(Access.Write);
+		word.Read().Should().Be(Access.Execute);
+
+		var mid = new Atomic<MidAccess>(MidAccess.Read);
+		mid.Or(MidAccess.Write | MidAccess.High).Should().Be(MidAccess.Read);
+		mid.Read().Should().Be(MidAccess.Read | MidAccess.Write | MidAccess.High);
+		ShouldHaveZeroSlack(mid);
+		mid.And(MidAccess.High | MidAccess.Write).Should().Be(MidAccess.Read | MidAccess.Write | MidAccess.High);
+		mid.Read().Should().Be(MidAccess.Write | MidAccess.High);
+		ShouldHaveZeroSlack(mid);
+		mid.Xor(MidAccess.High).Should().Be(MidAccess.Write | MidAccess.High);
+		mid.Read().Should().Be(MidAccess.Write);
+		ShouldHaveZeroSlack(mid);
+
+		var narrow = new Atomic<NarrowAccess>(NarrowAccess.Read);
+		narrow.Or(NarrowAccess.Write).Should().Be(NarrowAccess.Read);
+		narrow.Read().Should().Be(NarrowAccess.Read | NarrowAccess.Write);
+		ShouldHaveZeroSlack(narrow);
+		narrow.And(NarrowAccess.Write).Should().Be(NarrowAccess.Read | NarrowAccess.Write);
+		narrow.Read().Should().Be(NarrowAccess.Write);
+		ShouldHaveZeroSlack(narrow);
+		narrow.Xor(NarrowAccess.Execute).Should().Be(NarrowAccess.Write);
+		narrow.Read().Should().Be(NarrowAccess.Write | NarrowAccess.Execute);
+		ShouldHaveZeroSlack(narrow);
+	}
+
+	[Fact]
+	public void BitwiseOperations_WhenTheValueIsAnEnum_AllocateNothing()
+	{
+		var cell = new Atomic<Access>(Access.None);
+		cell.Or(Access.Read);
+
+		var before = GC.GetAllocatedBytesForCurrentThread();
+		for (var i = 0; i < 1_000; i++)
+		{
+			cell.Or(Access.Write);
+			cell.And(Access.Read);
+			cell.Xor(Access.Execute);
+		}
+
+		(GC.GetAllocatedBytesForCurrentThread() - before).Should().Be(0);
+	}
+
+	/// <summary>Asserts that the word a narrow cell is kept in holds its value and zeros behind it.</summary>
+	/// <typeparam name="T">A type narrower than a word, so that the cell keeps it in one.</typeparam>
+	/// <param name="atomic">The cell to look inside.</param>
+	/// <remarks>
+	/// The slack is what <see cref="Atomic{T}.Read"/> discards, so it has to be read from the field
+	/// directly. Stray bits there are not a wrong answer but a broken promise: every compare-exchange
+	/// after them misses on the instruction and pays for the tail, and a type with no equality of its own
+	/// allocates to get there.
+	/// </remarks>
+	private static void ShouldHaveZeroSlack<T>(Atomic<T> atomic) where T : unmanaged
+	{
+		var expected = UIntPtr.Zero;
+		Unsafe.WriteUnaligned(ref Unsafe.As<UIntPtr, Byte>(ref expected), atomic.Read());
+		var word = Unsafe.As<T, UIntPtr>(ref atomic.Storage);
+		((UInt64)word).Should().Be((UInt64)expected, "writes zero the slack, and so must a mask");
+	}
 }

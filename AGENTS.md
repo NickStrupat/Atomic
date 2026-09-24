@@ -11,7 +11,7 @@ settled, and the traps this repo has already fallen into.
 
 | | |
 |---|---|
-| `Atomic/` | The only project that ships. `Atomic<T>` plus `AtomicExtensions`, two files. |
+| `Atomic/` | The only project that ships. `Atomic<T>`, `AtomicExtensions`, `AtomicEnumExtensions`. |
 | `Candidates/` | `BoxAtomic<T>`, `SeqLockAtomic<T>`, `IAtomic<T>`, and struct adapters. Designs this one was chosen over; kept so the suite and the harness can drive all three. |
 | `Tests/` | Contract, thread safety, storage/layout, native instructions, codegen. |
 | `Benchmarks/` | BenchmarkDotNet per category, plus `contention` and `gc` modes. |
@@ -27,7 +27,7 @@ dotnet run -c Release --project Benchmarks -- contention
 dotnet run -c Release --project Benchmarks -- gc
 ```
 
-Release is 136 tests; Debug is 132 + 4 skipped. Zero warnings is the standing state — keep it, because
+Release is 139 tests; Debug is 135 + 4 skipped. Zero warnings is the standing state — keep it, because
 `GenerateDocumentationFile` is on and it is what catches a `cref` to something you just deleted.
 
 The 32-bit strategies are only exercised on real 32-bit hardware — an arm32 Raspberry Pi 3B on the
@@ -43,7 +43,8 @@ tar -czf - -C Tests/bin/Release/net10.0/linux-arm publish | ssh pi@raspberrypi3.
 ssh pi@raspberrypi3.local 'cd atomic && chmod +x Tests CodegenProbe && ./Tests'
 ```
 
-136 there too, 14 skipped: the 11 `TypeLayout` rows, the two arm64 mnemonic assertions, and the
+136 there when last run, before the enum and no-`IEquatable` tests were added — rerun before quoting
+a new figure. 14 skipped: the 11 `TypeLayout` rows, the two arm64 mnemonic assertions, and the
 NativeAOT leg, since ILC does not target 32-bit `linux-arm`. `TheStorageStrategyIsChosenWhenTheJitCompilesTheCell`
 does run there and passes. Do not build on the device — it has 1 GB of RAM.
 
@@ -87,6 +88,22 @@ which is stronger than the README promises and so breaks nothing, but is not fre
 nothing; the box/unbox is removed at import, not at tier 1 (measured: zero bytes in the first 30
 tier-0 calls). `Unsafe.As` and a `Reinterpret` helper were both tried and both removed — they are not
 better and they make two spellings of one thing. `NativeInterlockedTests` asserts the zero allocation.
+
+**Enums get `And`, `Or` and `Xor` from a second class, not more overloads.** Constraints are not part
+of a signature, so a second `Or` beside the operator-constrained one is a duplicate member;
+`AtomicEnumExtensions` puts it in its own class, where both are candidates and the constraints settle
+it. Nothing satisfies both — an enum cannot implement an interface — so there is no ambiguity and the
+caller never names a type argument. `Unsafe.As` on the storage is deliberate there and is the one place
+the cast-through-`Object` idiom cannot reach: generics are invariant, so `(Atomic<Int32>)(Object)` a
+cell of an enum throws whatever the enum is backed by. `And` and `Or` take the instruction at every
+width the cell keeps inline: 4 and 8 bytes outright, 1 and 2 bytes through the `Int32` over the word
+they are kept in. That is only sound because the mask is zero extended — a byte copy, not a numeric
+conversion — so `Or` leaves the slack zero and `And` puts it back to zero. A sign-extended mask would set
+slack bits under `Or` that `Read`, the returned values and even a later compare-exchange all hide (the
+last misses on the instruction and the `Equals` tail rescues it), so the enum test reads the word itself;
+it was falsified against exactly that break. An 8-byte enum at 32 bits is not inline and takes the loop,
+as does every `Xor`. `Add`, `Increment`, `Max` and the rest are absent on purpose — flags are the reason
+to want this.
 
 **Six operations specialise:** `Add`, `Subtract`, `Increment`, `Decrement`, `And`, `Or`, each over
 `Int32`/`Int64`/`UInt32`/`UInt64`. `Subtract` adds the negation (`unchecked(-x)`, `unchecked(0U - x)`).
@@ -182,6 +199,23 @@ failing every attempt in a row is the different claim worth failing the build on
 
 ## Measurement traps hit here
 
+- **A struct with no `Equals` of its own boxes on a `CompareExchange` miss, at any width.** Not a
+  monitor-vs-inline thing: `Atomic<NoEquatable>` (4 bytes, word-fitting, `IsLockFree`) allocates 48 bytes
+  on a losing comparison, and `Atomic<WideNoEquatable>` (24 bytes, monitor) allocates 80 — both zero on a
+  hit — because `EqualityComparer<T>.Default` for a type
+  with neither an `Equals` override nor `IEquatable<T>` is `ObjectEqualityComparer<T>`, which boxes both
+  operands to reach `Object.Equals`. The cell's own bit-compare runs first and absorbs every hit, so this
+  only shows up on a miss — but a losing `CompareExchange` under contention is not rare, it is the normal
+  case a retry loop exists for. `record struct` and anything implementing `IEquatable<T>` never reach
+  this path. `RuntimeHelpers.IsBitwiseEquatable` — the runtime's own test for a type whose equality is its bits —
+  would let a miss against a
+  type with no references and no floating-point fields skip `Equals` entirely — bits already differ, and
+  for that category differing bits already is the final answer, the way `ValueType.Equals`'s own fast
+  path treats it once unboxed. It is `internal` and unreachable from here, which is the whole reason this
+  stayed a documented gap rather than a fix: nothing public distinguishes "differing bits genuinely means
+  unequal" from "this type's `Equals` might disagree with its bits" for a type that never opted into
+  `IEquatable<T>`. `CompareExchange_WhenTypeHasNoEquatable_AllocatesOnlyOnAMiss` pins the current numbers
+  so a change to this either direction gets noticed rather than silently shipped.
 - **Type benchmark cells as a struct adapter behind a generic, never as `IAtomic<T>`.** Interface
   dispatch blocks inlining and reported differences of up to 18× that were entirely its own. The
   categories where all three implementations emit the same instruction are the control: they have to

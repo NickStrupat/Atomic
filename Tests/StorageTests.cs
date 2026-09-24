@@ -370,4 +370,34 @@ public class StorageTests
 			atomic.Write(value);
 		return GC.GetAllocatedBytesForCurrentThread() - before;
 	}
+
+	[Fact]
+	public void CompareExchange_WhenTypeHasNoEquatable_AllocatesOnlyOnAMiss()
+	{
+		// EqualityComparer<T>.Default for NoEquatable is ObjectEqualityComparer<T>, which boxes both
+		// operands to reach Object.Equals. The cell tries bits first, so a hit never reaches it — every
+		// successful compare-exchange, the common case in a retry loop, allocates nothing. A miss does,
+		// at either width: this is about what T is, not how wide it is. See AGENTS.md for why this stays
+		// a documented gap rather than a fix.
+		var word = new Atomic<NoEquatable>(new NoEquatable { Value = 1 });
+		MeasureCompareExchange(word, new NoEquatable { Value = 1 }, new NoEquatable { Value = 1 })
+			.Should().Be(0, "the comparand names the value the cell holds, so bits alone settle it");
+		MeasureCompareExchange(word, new NoEquatable { Value = 9 }, new NoEquatable { Value = 7 })
+			.Should().BeGreaterThan(0, "bits differ, so the type has to be asked, and asking boxes");
+
+		var wide = new Atomic<WideNoEquatable>(new WideNoEquatable { A = 1, B = 1, C = 1 });
+		MeasureCompareExchange(wide, new WideNoEquatable { A = 1, B = 1, C = 1 }, new WideNoEquatable { A = 1, B = 1, C = 1 })
+			.Should().Be(0, "the comparand names the value the cell holds, so bits alone settle it");
+		MeasureCompareExchange(wide, new WideNoEquatable { A = 9, B = 9, C = 9 }, new WideNoEquatable { A = 7, B = 7, C = 7 })
+			.Should().BeGreaterThan(0, "bits differ, so the type has to be asked, and asking boxes");
+	}
+
+	private static Int64 MeasureCompareExchange<T>(Atomic<T> atomic, T value, T comparand)
+	{
+		atomic.CompareExchange(value, comparand); // warm up before measuring
+		var before = GC.GetAllocatedBytesForCurrentThread();
+		for (var i = 0; i < Iterations; i++)
+			atomic.CompareExchange(value, comparand);
+		return GC.GetAllocatedBytesForCurrentThread() - before;
+	}
 }
