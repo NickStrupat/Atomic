@@ -6,31 +6,30 @@ using ObjectLayoutInspector;
 namespace Tests;
 
 /// <summary>
-/// Where each implementation puts the value, and what that costs. Unlike
-/// <see cref="AtomicContractTests"/>, these are the differences between the shipping cell and the
-/// candidates it was chosen over, rather than the behaviour they share.
+/// Where each implementation stores the value, and what that costs. Unlike
+/// <see cref="AtomicContractTests"/>, which checks the behaviour all implementations share, these test
+/// how the shipping cell and the candidates differ.
 /// </summary>
 public class StorageTests
 {
 	private const Int32 Iterations = 10_000;
 
-	/// <summary>What one box costs on this runtime, at its cheapest and its dearest.</summary>
+	/// <summary>The fewest and most bytes one boxed <see cref="Decimal"/> costs on this runtime.</summary>
 	/// <remarks>
 	/// <para>
-	/// This was written down as 32 — an object header plus a Decimal — until a 32-bit runtime
-	/// disagreed. A Decimal wants an 8-byte boundary and a 4-byte object header does not leave it
-	/// on one, so such a box is 28 bytes and the allocator puts a 12-byte filler in front of it to
-	/// seat it. 28 and 12 come to a multiple of eight, so the next one needs a filler too: measured on an
-	/// arm32 Pi, 40 bytes were charged for 19902 boxes out of 20000 and 28 for the rest, in no fixed
-	/// proportion. A class holding four Int32s is 24 bytes every single time, so this is the alignment
-	/// and not the header. At 64 bits nothing is padded and both ends of this are 32.
+	/// This used to be hard-coded as 32 bytes (object header plus a <see cref="Decimal"/>), which is right
+	/// at 64 bits but wrong at 32. There, a <see cref="Decimal"/> needs an 8-byte boundary and the 4-byte
+	/// header does not leave it on one, so the box is 28 bytes and the allocator adds a 12-byte filler in
+	/// front to align it. 28 + 12 is a multiple of 8, so the next box needs a filler too. Measured on an
+	/// arm32 Pi, 19902 boxes out of 20000 were charged 40 bytes and the rest 28, in no fixed proportion. A
+	/// class holding four <see cref="Int32"/>s costs 24 bytes every time, which shows the cause is
+	/// alignment, not the header.
 	/// </para>
 	/// <para>
-	/// So what the two tests below assert is the number of boxes and not a byte count: a band wide enough
-	/// for one box per call and too narrow for two. It is measured against <see cref="BoxOfDecimal"/>
-	/// rather than against the cell under test, because calibrating on the thing being measured would let
-	/// a cell that built a box per attempt set its own band and pass — which is the regression the second
-	/// test exists for.
+	/// So the tests below count boxes rather than bytes: they assert a range wide enough for one box per
+	/// call and too narrow for two. The range is measured on <see cref="BoxOfDecimal"/>, not on the cell
+	/// under test. Measuring the cell itself would let a cell that built a box on every attempt set its own
+	/// range and pass, which is exactly the regression the second test exists to catch.
 	/// </para>
 	/// </remarks>
 	private static readonly (Int64 Least, Int64 Most) OneBox = MeasureOneBox();
@@ -313,15 +312,17 @@ public class StorageTests
 			Threads * (Int64)PerThread * OneBox.Most);
 	}
 
-	/// <summary>Checks what boundary a cell's field really does begin on.</summary>
+	/// <summary>Checks whether a cell's field actually starts on the given boundary.</summary>
 	/// <typeparam name="T">The type of the value held by the cell.</typeparam>
-	/// <param name="alignment">The boundary the field is expected to be seated on, in bytes.</param>
-	/// <returns><see langword="true"/> when a view of that width over the field would be aligned.</returns>
+	/// <param name="alignment">The expected alignment of the field, in bytes.</param>
+	/// <returns>
+	/// <see langword="true"/> if the field's address is a multiple of <paramref name="alignment"/>.
+	/// </returns>
 	/// <remarks>
-	/// The alignment follows from <see cref="Atomic{T}"/> declaring a single field, so this asserts an
-	/// invariant rather than discovering a fact. A collection moving the cell is harmless: the offset of
-	/// the field within the object is fixed and every object begins on a word boundary, so the answer
-	/// does not depend on where it sits.
+	/// The alignment follows from <see cref="Atomic{T}"/> declaring only one field, so this checks an
+	/// invariant rather than discovering something new. A GC moving the cell does not matter: the field's
+	/// offset within the object is fixed and every object starts on a word boundary, so the answer is the
+	/// same wherever the object is.
 	/// </remarks>
 	private static unsafe Boolean FieldIsAlignedTo<T>(Int32 alignment) where T : unmanaged
 	{
@@ -329,21 +330,21 @@ public class StorageTests
 		return ((nint)Unsafe.AsPointer(ref probe.Storage) & (alignment - 1)) == 0;
 	}
 
-	/// <summary>A class shaped like the box <see cref="BoxAtomic{T}"/> builds for a wide value.</summary>
+	/// <summary>A class shaped like the box <see cref="BoxAtomic{T}"/> makes for a wide value.</summary>
 	/// <remarks>
-	/// Deliberately not that box, which is private and would be the wrong thing to measure anyway: see
-	/// the remarks on <see cref="OneBox"/>.
+	/// Deliberately not that box itself, which is private and would be the wrong thing to measure anyway;
+	/// see the remarks on <see cref="OneBox"/>.
 	/// </remarks>
 	private sealed class BoxOfDecimal(Decimal value)
 	{
 		internal readonly Decimal Value = value;
 	}
 
-	/// <summary>Keeps a measured allocation reachable, so that nothing is free to delete it.</summary>
+	/// <summary>Keeps a measured allocation reachable, so the compiler cannot remove it.</summary>
 	private static Object? sink;
 
-	/// <summary>Measures what a single box is charged, at its cheapest and its dearest.</summary>
-	/// <returns>The least and the most that one allocation cost.</returns>
+	/// <summary>Measures the fewest and most bytes a single box is charged.</summary>
+	/// <returns>The smallest and largest cost seen for one allocation.</returns>
 	private static (Int64 Least, Int64 Most) MeasureOneBox()
 	{
 		for (var i = 0; i < 1_000; i++)

@@ -4,31 +4,29 @@ using NickStrupat;
 namespace Benchmarks;
 
 /// <summary>
-/// Throughput with several threads on one cell, which is where the candidates separate most sharply
-/// and where a per-operation benchmark says nothing.
+/// Measures throughput with several threads using one cell. This is where the candidates differ most,
+/// and a single-threaded benchmark cannot show it.
 /// </summary>
 /// <remarks>
 /// <para>
-/// Every candidate is driven through a struct adapter and a harness generic over it, not through
-/// <see cref="IAtomic{T}"/> directly. That is deliberate: a generic instantiated with a value type gets
-/// its own body, so the adapter and the cell both inline and every row pays the same nothing. Typed to
-/// the interface instead, the rows would not even pay the same something — a cell reached through one
-/// adapter costs more than a cell reached directly, which would have flattered whichever of them was
-/// measured without one.
+/// Every candidate is called through a struct adapter from a harness that is generic over the adapter,
+/// never through <see cref="IAtomic{T}"/>. A generic instantiated with a struct gets its own compiled
+/// copy, so the adapter and the cell both inline and no row pays any call overhead. Through the
+/// interface, the rows would not even pay the same overhead: a cell called through an adapter costs more
+/// than one called directly, which would favour whichever cell was measured without one.
 /// </para>
 /// <para>
-/// Every category <see cref="CellBenchmarks{T}"/> measures one operation at a time is measured here
-/// under contention too, including the ones where all three implementations emit the same instruction.
-/// Those rows are the control: three strategies that compile to the same code have to report the same
-/// throughput, and when this harness typed its cells as <see cref="IAtomic{T}"/> they did not — it
-/// reported differences of up to eighteen times, all of them its own dispatch. A row where the three
-/// agree is how you know the rows where they disagree are about the cells.
+/// Every category that <see cref="CellBenchmarks{T}"/> measures single-threaded is also measured here
+/// under contention, including those where all three implementations compile to the same instruction.
+/// Those rows are the control: identical code must give identical throughput. When this harness called
+/// cells through <see cref="IAtomic{T}"/>, those rows differed by up to 18 times, entirely because of
+/// interface dispatch. Rows that agree are what show that rows that disagree are measuring the cells.
 /// </para>
 /// <para>
-/// Read down a category, not across them. Within one the three cells do the same work on the same
-/// value, so the numbers answer which strategy wins. Between two they do not — a category is a
-/// different <c>T</c>, of a different width, and a reference read costs more than a word read before
-/// any cell is involved.
+/// Compare within a category, not between categories. Within one, the three cells do the same work on
+/// the same value, so the numbers show which strategy wins. Between categories they do not: each is a
+/// different <c>T</c> of a different width, and reading a reference already costs more than reading a
+/// word before any cell is involved.
 /// </para>
 /// </remarks>
 public static class Contention
@@ -53,7 +51,7 @@ public static class Contention
 		return 0;
 	}
 
-	/// <summary>Measures all three implementations against one category of <typeparamref name="T"/>.</summary>
+	/// <summary>Measures all three implementations for one category, <typeparamref name="T"/>.</summary>
 	/// <typeparam name="T">The type of the value held by the cell.</typeparam>
 	private static void ReportCategory<T>()
 	{
@@ -68,9 +66,9 @@ public static class Contention
 	}
 
 	/// <summary>
-	/// Incrementing one cell from every thread, which is the only place the instruction and the loop can
-	/// differ: the instruction never has to retry, and the loop retries once for every writer that lands
-	/// between its read and its exchange.
+	/// Measures incrementing one cell from every thread. Only under contention can the instruction and the
+	/// loop differ: the instruction never retries, while the loop retries once for every writer that gets
+	/// in between its read and its compare-exchange.
 	/// </summary>
 	private static void ReportIncrement()
 	{
@@ -85,23 +83,23 @@ public static class Contention
 		Console.WriteLine($"{"Atomic<T>.Increment from generic code",-40} {Drive(() => { for (var i = 0; i < Batch; i++) IncrementGenerically(atomic); }),10:F1}");
 	}
 
-	/// <summary>Increments from a callsite where the type is still a parameter.</summary>
+	/// <summary>Increments from generic code, where the type is still a type parameter.</summary>
 	/// <typeparam name="T">The type of the value held by the cell.</typeparam>
 	/// <param name="atomic">The cell to increment.</param>
 	/// <remarks>
-	/// This is the callsite the specialisation in <see cref="AtomicExtensions"/> exists for, and it used
-	/// to run at the speed of the loop. It now compiles to the same method as the row above it — there is
-	/// one spelling of <c>Increment</c> left, and both reach it — so the two agreeing is the point rather
-	/// than a coincidence: whether the type is written down at the callsite makes no difference.
+	/// This is the kind of call the specialisation in <see cref="AtomicExtensions"/> exists for; it used to
+	/// run at the speed of the loop. It now compiles to the same code as the "instruction" row, because
+	/// there is only one <c>Increment</c> and both calls reach it. The two rows matching is the point: it
+	/// makes no difference whether the caller names the concrete type.
 	/// </remarks>
 	private static void IncrementGenerically<T>(Atomic<T> atomic)
 	where T : System.Numerics.IIncrementOperators<T> => atomic.Increment();
 
-	/// <summary>Increments by compare-and-exchange, which the library no longer does for this type.</summary>
+	/// <summary>Increments with a compare-exchange loop, which the library no longer uses for this type.</summary>
 	/// <param name="atomic">The cell to increment.</param>
 	/// <remarks>
-	/// The row above and this one are the whole point of the comparison, and naming
-	/// <c>AtomicExtensions</c> stopped telling them apart once it began specialising on the type.
+	/// The comparison is between this and the "instruction" row. It is written out here because calling
+	/// <c>AtomicExtensions.Increment</c> now always gets the instruction for this type.
 	/// </remarks>
 	private static void IncrementByLoop(Atomic<Int64> atomic)
 	{
@@ -114,7 +112,7 @@ public static class Contention
 		}
 	}
 
-	/// <summary>Runs a batch of operations on every thread until the time is up.</summary>
+	/// <summary>Runs <paramref name="batch"/> repeatedly on every thread until the time is up.</summary>
 	/// <param name="batch">Performs <see cref="Batch"/> operations.</param>
 	/// <returns>Millions of operations per second across all threads.</returns>
 	private static Double Drive(Action batch)
@@ -138,7 +136,7 @@ public static class Contention
 		return operations / elapsed.Elapsed.TotalSeconds / 1_000_000.0;
 	}
 
-	/// <summary>A plain field, for the instruction to act on with nothing in the way.</summary>
+	/// <summary>A plain field, so the instruction can be measured with no cell around it.</summary>
 	private sealed class Counter
 	{
 		private Int64 count;
@@ -151,14 +149,14 @@ public static class Contention
 		}
 	}
 
-	/// <summary>Measures one cell under three mixes of readers and writers and prints the row.</summary>
+	/// <summary>Measures one cell under three mixes of readers and writers, and prints the row.</summary>
 	/// <typeparam name="T">The type of the value held by the cell.</typeparam>
 	/// <typeparam name="TCell">
-	/// The adapter presenting the cell. A struct, so that this method and everything it calls are
-	/// compiled for it specifically rather than shared with every other reference type.
+	/// The adapter wrapping the cell. It is a struct, so this method and everything it calls are compiled
+	/// specifically for it rather than shared with every reference type.
 	/// </typeparam>
 	/// <param name="name">The label for the row.</param>
-	/// <param name="create">Produces a fresh cell, so no scenario inherits another's contention.</param>
+	/// <param name="create">Creates a fresh cell, so no scenario inherits state from the previous one.</param>
 	private static void Report<T, TCell>(String name, Func<TCell> create)
 	where TCell : struct, IAtomic<T>
 	{
@@ -175,7 +173,7 @@ public static class Contention
 	/// <param name="writers">How many of the threads write; the rest read.</param>
 	/// <param name="value">The value the writers store.</param>
 	/// <returns>Millions of operations per second across all threads.</returns>
-	/// <typeparam name="TCell">The adapter presenting the cell; see <see cref="Report{T, TCell}"/>.</typeparam>
+	/// <typeparam name="TCell">The adapter wrapping the cell; see <see cref="Report{T, TCell}"/>.</typeparam>
 	private static Double Measure<T, TCell>(TCell atomic, Int32 writers, T value)
 	where TCell : struct, IAtomic<T>
 	{

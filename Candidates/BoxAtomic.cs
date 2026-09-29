@@ -4,16 +4,16 @@ using System.Runtime.InteropServices;
 namespace NickStrupat;
 
 /// <summary>
-/// Keeps a machine word beside an object slot, whatever <typeparamref name="T"/> is: a value fitting
-/// in the word goes in the word, a reference goes in the slot, and anything else is boxed and the box
+/// A candidate cell with two fields, an 8-byte word and an object slot. A value with no references that
+/// fits in 8 bytes goes in the word, a reference goes in the slot, and anything else is boxed and the box
 /// goes in the slot.
 /// </summary>
 /// <typeparam name="T">The type of the value held by the cell.</typeparam>
 /// <remarks>
-/// The word is a declared <see cref="Int64"/>, so it is always aligned and always has room, which makes
-/// this the one design where storage needs no assumptions about layout. The cost is that both fields
-/// exist for every <typeparamref name="T"/>, and that a value too wide for the word allocates a box on
-/// every write.
+/// The word is declared as an <see cref="Int64"/>, so it is always aligned and always 8 bytes. That makes
+/// this the only design that relies on nothing about the runtime's object layout. The costs are that
+/// every cell carries both fields whatever <typeparamref name="T"/> is, and that a value too wide for the
+/// word allocates a new box on every write.
 /// </remarks>
 public sealed class BoxAtomic<T> : IAtomic<T>
 {
@@ -30,7 +30,7 @@ public sealed class BoxAtomic<T> : IAtomic<T>
 			managed = ToSlot(value);
 	}
 
-	/// <summary>Gets a value indicating whether the value is held in the word rather than the slot.</summary>
+	/// <summary>Gets a value indicating whether the value is stored in the word rather than the slot.</summary>
 	public static Boolean IsInlineStorage => IsInline;
 
 	private static Boolean IsInline
@@ -142,15 +142,16 @@ public sealed class BoxAtomic<T> : IAtomic<T>
 		}
 	}
 
-	/// <summary>Whether a value the cell is holding is the value a comparand names.</summary>
+	/// <summary>On the boxed path, decides whether the value the cell holds is the comparand's value.</summary>
 	/// <param name="held">The value taken out of the slot.</param>
-	/// <param name="comparand">The value the caller expects it to be.</param>
-	/// <returns><see langword="true"/> when the two are the same value.</returns>
+	/// <param name="comparand">The value the caller expects.</param>
+	/// <returns><see langword="true"/> if the two are the same value.</returns>
 	/// <remarks>
-	/// Identical bits are the same value whatever the type says, so they are tried first — which is what
-	/// the inline path gets from its instruction for nothing, and what keeps a cell from refusing a
-	/// comparand naming the value it is holding. A <typeparamref name="T"/> holding a reference goes
-	/// straight to the type, since reading the bits of one races a moving GC.
+	/// Bits are compared first, and the type's equality is only asked if they differ. Identical bits are
+	/// the same value whatever the type says, and the word path already behaves this way because its
+	/// instruction compares bits first. Without it, a cell could refuse a comparand naming the exact value
+	/// it holds. A <typeparamref name="T"/> containing a reference skips the bit comparison and goes
+	/// straight to the type, because reading its bits races a moving GC.
 	/// </remarks>
 	private static Boolean HoldsTheSameValueAs(T held, T comparand) =>
 		(!RuntimeHelpers.IsReferenceOrContainsReferences<T>()

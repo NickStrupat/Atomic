@@ -8,44 +8,42 @@ using NickStrupat;
 namespace Tests;
 
 /// <summary>
-/// That the strategy a cell picks is chosen once, by the compiler, and not on every call.
+/// Checks, by reading the generated machine code, that each cell's strategy is chosen once by the
+/// compiler rather than tested on every call.
 /// </summary>
 /// <remarks>
 /// <para>
-/// Every other test here would pass just as well if <see cref="Atomic{T}"/> tested its storage strategy
-/// at run time on each access. Correctness does not depend on that test folding away — performance
-/// does, and it is the whole claim the library makes. So these read the code a compiler actually
-/// produced.
+/// Every other test would still pass if <see cref="Atomic{T}"/> tested its storage strategy at run time
+/// on each access. Correctness does not depend on the test folding away; performance does, and that is
+/// the library's main claim. So these tests read the code a compiler actually produced.
 /// </para>
 /// <para>
-/// Both compilers are held to the same statements, because the library claims the same thing of both,
-/// and the just-in-time one folding says nothing about the ahead-of-time one. Each assertion is paired
-/// with a case that must show the opposite: a test that only ever looks for something's absence passes
-/// just as happily when it is looking in the wrong place.
+/// The JIT and the NativeAOT compiler are held to the same assertions, because the library makes the
+/// same claim for both, and one folding the test says nothing about the other. Each assertion is paired
+/// with a case that must show the opposite, because a test that only checks something is absent passes
+/// just as well when it is looking in the wrong place.
 /// </para>
 /// <para>
-/// The monitor half is read from the names of the runtime helpers the code calls, which are the same
-/// wherever it runs. The instruction half cannot be — the difference between one instruction and a
-/// retry loop is not a call to anything, since the loop's compare-and-exchange inlines to a bare
-/// instruction of its own — so it is read as mnemonics, and only for the architecture they are written
-/// down for.
+/// Whether the lock is used is read from the names of the runtime helpers called, which are the same on
+/// every architecture. Whether an instruction or a retry loop was chosen cannot be read that way — the
+/// loop's compare-exchange also inlines to a bare instruction, so neither calls anything — so it is read
+/// from instruction mnemonics, and only on the architecture those are written for (arm64).
 /// </para>
 /// </remarks>
 public class CodegenTests
 {
-	/// <summary>The methods whose native code is wanted, as either compiler's filter spells them.</summary>
+	/// <summary>The methods to disassemble, in the filter syntax both compilers accept.</summary>
 	private const String Filter = "Probe* Increment TryCompareExchange";
 
-	/// <summary>The compare-exchange the instruction covers, as either compiler names it.</summary>
+	/// <summary>The name of the compare-exchange on a word-sized value, as both compilers print it.</summary>
 	/// <remarks>
-	/// The probe's wrapper is not the thing to read here: unlike <c>Read</c> and <c>Write</c>, this
-	/// method is not marked for inlining — the compare-exchange loops in <see cref="AtomicExtensions"/>
-	/// are what it has to fit inside, not a caller's frame — so it is compiled under its own name and
-	/// the wrapper holds nothing but a call to it. The wrapper's job is only to get it compiled.
+	/// This reads the method itself rather than the probe's wrapper. Unlike <c>Read</c> and <c>Write</c>,
+	/// <c>TryCompareExchange</c> is not marked for aggressive inlining, so it is compiled under its own
+	/// name and the wrapper only contains a call to it. The wrapper just makes sure it gets compiled.
 	/// </remarks>
 	private const String WordCompareExchange = "[long]:TryCompareExchange";
 
-	/// <summary>The compare-exchange that has to take the monitor, for the same reason.</summary>
+	/// <summary>The name of the compare-exchange that must take the lock, read directly likewise.</summary>
 	private const String WideCompareExchange = "[System.Decimal]:TryCompareExchange";
 
 	private static readonly Lazy<Listing> JustInTime = new(RunTheProbe);
@@ -67,7 +65,7 @@ public class CodegenTests
 	public void TheNativeInstructionIsChosenWhenTheAotCompilerCompilesTheExtension() =>
 		AssertTheInstructionWasChosen(Methods(AheadOfTime));
 
-	/// <summary>Requires that no branch on the storage strategy survived compilation.</summary>
+	/// <summary>Asserts that no test of the storage strategy survived compilation.</summary>
 	/// <param name="methods">Every method the compiler was asked to disassemble.</param>
 	private static void AssertTheStrategyFolded(IReadOnlyDictionary<String, String> methods)
 	{
@@ -93,7 +91,7 @@ public class CodegenTests
 		Body(methods, WideCompareExchange).Should().Contain("Monitor");
 	}
 
-	/// <summary>Requires that the type test picked the instruction and left no loop behind.</summary>
+	/// <summary>Asserts that the type test chose the instruction and left no loop behind.</summary>
 	/// <param name="methods">Every method the compiler was asked to disassemble.</param>
 	private static void AssertTheInstructionWasChosen(IReadOnlyDictionary<String, String> methods)
 	{
@@ -131,13 +129,13 @@ public class CodegenTests
 		Body(methods, WideCompareExchange).Should().NotContain("casal");
 	}
 
-	/// <summary>Every line that leaves the straight path, in the order they appear.</summary>
+	/// <summary>Finds every branch instruction in a method body, in order.</summary>
 	/// <param name="body">The lines of a method's listing.</param>
-	/// <returns>Each branch, conditional or not, including the ones that call and tail-call.</returns>
+	/// <returns>Each branch line, conditional or not, including calls and tail calls.</returns>
 	/// <remarks>
-	/// Spelled out rather than matched loosely, because arm64 has arithmetic whose mnemonics start with
-	/// the same letters — <c>bic</c>, <c>bfi</c> — and counting one of those as a branch would make the
-	/// assertion that reads this quietly weaker. arm64 only: the caller is already gated on it.
+	/// The mnemonics are listed exactly rather than matched by prefix, because some arm64 arithmetic
+	/// instructions also start with <c>b</c> (<c>bic</c>, <c>bfi</c>), and counting one as a branch would
+	/// quietly weaken the assertion that uses this. arm64 only; the caller already checks that.
 	/// </remarks>
 	private static String[] Branches(String body) =>
 		Regex.Matches(body,
@@ -146,8 +144,8 @@ public class CodegenTests
 			.Select(m => m.Value.Trim())
 			.ToArray();
 
-	/// <summary>The methods a compiler disassembled, or a skip saying why there are none.</summary>
-	/// <param name="listing">The run to take them from.</param>
+	/// <summary>Returns the methods a compiler disassembled, or skips the test if there are none.</summary>
+	/// <param name="listing">The compiler run to take them from.</param>
 	/// <returns>Each disassembled method, by name.</returns>
 	private static IReadOnlyDictionary<String, String> Methods(Lazy<Listing> listing)
 	{
@@ -158,9 +156,9 @@ public class CodegenTests
 		return methods;
 	}
 
-	/// <summary>The body of the one disassembled method whose name contains <paramref name="name"/>.</summary>
+	/// <summary>Returns the listing of the one method whose name contains <paramref name="name"/>.</summary>
 	/// <param name="methods">Every method the run disassembled.</param>
-	/// <param name="name">Enough of the method's name to pick it out.</param>
+	/// <param name="name">Enough of the method's name to identify it uniquely.</param>
 	/// <returns>The lines of that method's listing.</returns>
 	private static String Body(IReadOnlyDictionary<String, String> methods, String name)
 	{
@@ -170,7 +168,7 @@ public class CodegenTests
 		return matches[0].Value;
 	}
 
-	/// <summary>The call instructions in a method body, whatever the architecture spells them.</summary>
+	/// <summary>Finds the call instructions in a method body, on arm64 or x64.</summary>
 	/// <param name="body">The lines of a method's listing.</param>
 	/// <returns>Every line that transfers control to another method.</returns>
 	private static String[] Calls(String body) =>
@@ -178,8 +176,8 @@ public class CodegenTests
 			.Select(m => m.Value.Trim())
 			.ToArray();
 
-	/// <summary>Runs the probe with the JIT's disassembler on and collects what it printed.</summary>
-	/// <returns>What it disassembled, or why it could not be read.</returns>
+	/// <summary>Runs the probe with JIT disassembly turned on and collects the output.</summary>
+	/// <returns>The disassembled methods, or why there are none.</returns>
 	private static Listing RunTheProbe()
 	{
 		// An unoptimised build is not the thing being asked about, and reading one would answer a
@@ -206,12 +204,12 @@ public class CodegenTests
 		return Listing.Of(output, "this runtime produced no disassembly, so there is nothing here to read");
 	}
 
-	/// <summary>Publishes the probe ahead of time, asking the compiler for the same disassembly.</summary>
-	/// <returns>What it disassembled, or why it could not be read.</returns>
+	/// <summary>Publishes the probe with NativeAOT, asking the compiler for the same disassembly.</summary>
+	/// <returns>The disassembled methods, or why there are none.</returns>
 	/// <remarks>
-	/// Publishing rather than running, because ahead-of-time code is produced by the build. It takes a
-	/// few seconds, and needs a native toolchain that not every machine has — a machine without one
-	/// skips, which is a visible outcome rather than a quiet pass.
+	/// This publishes rather than runs, because NativeAOT generates code at build time. It takes a few
+	/// seconds and needs a native toolchain. A machine without one skips the test, which shows up in the
+	/// results rather than passing silently.
 	/// </remarks>
 	private static Listing CompileTheProbeAheadOfTime()
 	{
@@ -257,8 +255,8 @@ public class CodegenTests
 		}
 	}
 
-	/// <summary>Walks up from the test assembly looking for the probe's project file.</summary>
-	/// <returns>The path to it, or <see langword="null"/> if it is not there.</returns>
+	/// <summary>Searches upward from the test assembly for the probe's project file.</summary>
+	/// <returns>Its path, or <see langword="null"/> if it was not found.</returns>
 	private static String? FindProbeProject()
 	{
 		for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
@@ -271,13 +269,13 @@ public class CodegenTests
 		return null;
 	}
 
-	/// <summary>The last few lines of a build log, for a message that has to stay readable.</summary>
+	/// <summary>Returns the last few non-empty lines of a build log, to keep a skip message readable.</summary>
 	/// <param name="log">Everything the build printed.</param>
-	/// <returns>Its tail.</returns>
+	/// <returns>The last 8 non-empty lines.</returns>
 	private static String Tail(String log) =>
 		String.Join(Environment.NewLine, log.Split('\n').Where(l => l.Trim().Length > 0).TakeLast(8));
 
-	/// <summary>Removes a temporary file or directory, and does not mind if it is already gone.</summary>
+	/// <summary>Deletes a temporary file or directory, ignoring it if it is already gone.</summary>
 	/// <param name="path">What to remove.</param>
 	private static void Delete(String path)
 	{
@@ -294,24 +292,24 @@ public class CodegenTests
 		}
 	}
 
-	/// <summary>What one compiler disassembled, or why nothing could be read from it.</summary>
-	/// <param name="Methods">Each method's listing, by the name in its header.</param>
-	/// <param name="Reason">Why there is nothing to read, when there is not.</param>
+	/// <summary>What one compiler disassembled, or why there is nothing.</summary>
+	/// <param name="Methods">Each method's listing, keyed by the name in its header.</param>
+	/// <param name="Reason">Why there is nothing to read, or <see langword="null"/> if there is.</param>
 	private readonly record struct Listing(
 		IReadOnlyDictionary<String, String> Methods,
 		String? Reason)
 	{
 		private static readonly Dictionary<String, String> None = new(StringComparer.Ordinal);
 
-		/// <summary>A listing that could not be produced.</summary>
-		/// <param name="reason">Why not.</param>
-		/// <returns>The empty listing, carrying the reason.</returns>
+		/// <summary>Creates an empty listing that records why it could not be produced.</summary>
+		/// <param name="reason">Why there is no listing.</param>
+		/// <returns>An empty listing carrying the reason.</returns>
 		public static Listing Unavailable(String reason) => new(None, reason);
 
 		/// <summary>Splits a disassembly listing into one entry per method.</summary>
 		/// <param name="output">Everything the compiler printed.</param>
-		/// <param name="whenEmpty">Why to say there is nothing to read, if there is nothing.</param>
-		/// <returns>The methods, or an unavailable listing.</returns>
+		/// <param name="whenEmpty">The reason to give if the output contains no methods.</param>
+		/// <returns>The methods, or an unavailable listing if there were none.</returns>
 		public static Listing Of(String output, String whenEmpty)
 		{
 			var methods = new Dictionary<String, String>(StringComparer.Ordinal);

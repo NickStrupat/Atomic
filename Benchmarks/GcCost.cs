@@ -4,31 +4,30 @@ using NickStrupat;
 namespace Benchmarks;
 
 /// <summary>
-/// What a cell's allocations cost the process rather than the thread doing them.
+/// Measures what a cell's allocations cost the whole process, not just the thread that allocates.
 /// </summary>
 /// <remarks>
 /// <para>
-/// A per-operation benchmark charges an allocating cell almost nothing, and is not wrong to: the
-/// allocation is a pointer bump, the boxes die before the next collection looks at them, and the
-/// collections that do happen are inside the thread's own wall clock. <see cref="CellBenchmarks{T}"/>
-/// measures a <see cref="BoxAtomic{T}"/> write of a <see cref="Decimal"/> at a third of what
-/// <see cref="Atomic{T}"/> costs, and that measurement is honest as far as it goes.
+/// A single-threaded benchmark charges an allocating cell almost nothing, and rightly so: the allocation
+/// is a pointer bump, the boxes are dead before the next collection, and the collections that do happen
+/// fall inside the thread's own timing. <see cref="CellBenchmarks{T}"/> measures a
+/// <see cref="BoxAtomic{T}"/> write of a <see cref="Decimal"/> at a third of the cost of
+/// <see cref="Atomic{T}"/>, and that is accurate as far as it goes.
 /// </para>
 /// <para>
-/// It does not go far enough, because a generation zero collection stops every thread in the process,
-/// not the one that made the garbage. So each cell is run twice: once with the writer alone, and once
-/// with it beside threads doing unrelated work. Those threads allocate nothing whatsoever, which is
-/// what makes the attribution clean — every collection during a run is the writer's — and they are
-/// otherwise ignored. Their own throughput is not reported, because it turns out to track how fast the
-/// writer runs rather than how much it allocates, and a cell that allocates nothing at all costs them
-/// as much as one that does simply by keeping a core busy.
+/// It misses that a generation 0 collection stops every thread in the process, not only the one that
+/// made the garbage. So each cell is run twice: once with the writer alone, and once alongside
+/// "bystander" threads doing unrelated work. The bystanders allocate nothing, so every collection during
+/// a run is the writer's. Their own throughput is not reported, because it turned out to track how fast
+/// the writer runs rather than how much it allocates: a cell that allocates nothing slows them just as
+/// much, simply by keeping a core busy.
 /// </para>
 /// <para>
-/// What the second run shows is that the pause is not a fixed toll on the allocating thread. The same
-/// writes cost several times more once there are other threads to suspend and resume, and the last
-/// column charges that pause to every thread it stops. That column is a model, not a measurement: it
-/// assumes the other threads had work to do, which is the case worth worrying about. Reads are absent
-/// throughout — nothing here allocates to read.
+/// The second run shows that the pause is not a fixed cost paid by the allocating thread. The same writes
+/// cost several times more once there are other threads to suspend and resume. The last column charges
+/// the pause to every thread it stops. That column is a model, not a measurement: it assumes the other
+/// threads had work to do, which is the case that matters. Reads are not measured, because no cell
+/// allocates to read.
 /// </para>
 /// </remarks>
 public static class GcCost
@@ -52,7 +51,7 @@ public static class GcCost
 		return 0;
 	}
 
-	/// <summary>Measures all three implementations against one category of <typeparamref name="T"/>.</summary>
+	/// <summary>Measures all three implementations for one category, <typeparamref name="T"/>.</summary>
 	/// <typeparam name="T">The type of the value held by the cell.</typeparam>
 	private static void ReportCategory<T>()
 	{
@@ -69,10 +68,10 @@ public static class GcCost
 			Measure<T, SeqLockAtomicAdapter<T>>(new SeqLockAtomicAdapter<T>(value), value, Bystanders));
 	}
 
-	/// <summary>Prints one row.</summary>
+	/// <summary>Prints one row of the table.</summary>
 	/// <param name="name">The label for the row.</param>
 	/// <param name="alone">The run with the writer on its own.</param>
-	/// <param name="crowded">The run with the writer beside <see cref="Bystanders"/> other threads.</param>
+	/// <param name="crowded">The run with the writer alongside <see cref="Bystanders"/> other threads.</param>
 	private static void Report(String name, Result alone, Result crowded)
 	{
 		// The writer's own nanoseconds already include its share of the pause, because it was stopped
@@ -84,13 +83,13 @@ public static class GcCost
 			+ $"{alone.PausePerWrite,10:F2} ns{crowded.PausePerWrite,14:F2} ns{charged,8:F1} ns");
 	}
 
-	/// <summary>Runs one writer and the bystanders, and collects what happened.</summary>
+	/// <summary>Runs one writer alongside the bystanders and records the results.</summary>
 	/// <typeparam name="T">The type of the value held by the cell.</typeparam>
-	/// <typeparam name="TCell">The adapter presenting the cell.</typeparam>
+	/// <typeparam name="TCell">The adapter wrapping the cell.</typeparam>
 	/// <param name="cell">The cell to write to.</param>
 	/// <param name="value">The value the writer stores.</param>
-	/// <param name="bystanders">How many threads doing unrelated work to run alongside.</param>
-	/// <returns>Throughput, allocation and pause for the run.</returns>
+	/// <param name="bystanders">How many threads doing unrelated work to run alongside the writer.</param>
+	/// <returns>The run's throughput, allocation and GC pause.</returns>
 	private static Result Measure<T, TCell>(TCell cell, T value, Int32 bystanders)
 	where TCell : struct, IAtomic<T>
 	{
@@ -149,11 +148,11 @@ public static class GcCost
 			PausePerWrite: pauseNanoseconds / writes);
 	}
 
-	/// <summary>What one run of <see cref="Measure{T, TCell}"/> observed.</summary>
+	/// <summary>The results of one run of <see cref="Measure{T, TCell}"/>.</summary>
 	/// <param name="Writes">Millions of writes per second.</param>
 	/// <param name="Bystander">Millions of unrelated operations per second, across all bystanders.</param>
 	/// <param name="Bytes">Bytes allocated per write.</param>
-	/// <param name="Gen0">Generation zero collections during the run.</param>
+	/// <param name="Gen0">Number of generation 0 collections during the run.</param>
 	/// <param name="PausePerWrite">Nanoseconds of stop-the-world pause per write.</param>
 	private readonly record struct Result(
 		Double Writes,

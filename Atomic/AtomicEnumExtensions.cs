@@ -4,50 +4,57 @@ using System.Runtime.CompilerServices;
 namespace NickStrupat;
 
 /// <summary>
-/// Bitwise read-modify-write operations for enum values, which no operator interface admits.
+/// Atomic bitwise operations — and, or, xor — for cells holding an enum, typically a set of flags.
 /// </summary>
 /// <remarks>
 /// <para>
-/// An enum satisfies none of the constraints <see cref="AtomicExtensions"/> is written against: it
-/// implements no interfaces, so <see cref="IBitwiseOperators{TSelf,TOther,TResult}"/> is out of reach
-/// however many operators C# lets you write against it. Flags in a cell is the ordinary reason to want
-/// an atomic bitwise operation, so the gap was the wrong way round.
+/// <see cref="AtomicExtensions"/> cannot serve enums. Its bitwise methods require
+/// <see cref="IBitwiseOperators{TSelf,TOther,TResult}"/>, and an enum cannot implement interfaces, even
+/// though C# lets you apply <c>&amp;</c>, <c>|</c> and <c>^</c> to one. Flags are the most common reason to
+/// want atomic bitwise operations at all, so these fill that gap.
 /// </para>
 /// <para>
-/// These are a separate class rather than more overloads because constraints are not part of a
-/// signature, so a second <c>Or</c> beside the first is a duplicate member. In separate classes both
-/// are candidates and the constraints settle it: an enum discards the operator one and a type with
-/// operators discards this one, and nothing can satisfy both, an enum being unable to implement an
-/// interface. The caller writes <c>cell.Or(flag)</c> either way and never names a type argument.
+/// They live in a separate class rather than as extra overloads because constraints are not part of a
+/// method signature: a second <c>Or</c> beside the first would be a duplicate member. In separate
+/// classes both are candidates and the constraints decide which applies. An enum rules out the
+/// operator-constrained one, a type with the operators rules out this one, and no type satisfies both.
+/// The caller writes <c>cell.Or(flag)</c> either way, without naming a type argument.
 /// </para>
 /// <para>
-/// Where an instruction exists it is used, on the same terms as <see cref="AtomicExtensions"/>: only
-/// where <c>Atomic&lt;T&gt;.IsInline</c> says the cell swaps the field itself. An enum is backed by an
-/// integral type, so it is 1, 2, 4 or 8 bytes, and <see cref="Interlocked"/> covers only the last two —
-/// but a value narrower than the word is kept in one anyway, with the slack behind it zeroed and
-/// belonging to nobody. So 1 and 2 byte enums are masked through that word rather than looped over: a
-/// mask zero extended from the value leaves the slack at zero under <see cref="Or"/> and puts it back
-/// to zero under <see cref="And"/>, which is where the cell wants it either way. Only
-/// <see cref="Xor"/> is always a loop, there being no interlocked exclusive or at any width.
+/// When the cell swaps its value in place (<c>Atomic&lt;T&gt;.IsInline</c>), <see cref="And"/> and
+/// <see cref="Or"/> use a single <see cref="Interlocked"/> instruction, on the same terms as
+/// <see cref="AtomicExtensions"/>:
+/// </para>
+/// <list type="bullet">
+/// <item><description>4- and 8-byte enums use the instruction of that width directly.</description></item>
+/// <item><description>
+/// 1- and 2-byte enums use the 4-byte instruction on the word they are stored in. This is only correct
+/// because the mask is zero-extended: the spare bytes after the value stay zero under <see cref="Or"/>
+/// and are set back to zero under <see cref="And"/>, which is what the cell requires.
+/// </description></item>
+/// <item><description>
+/// Everything else is a compare-exchange loop: <see cref="Xor"/> at every width, since there is no
+/// interlocked exclusive or, and an 8-byte enum on a 32-bit runtime, which the cell keeps behind its lock.
+/// </description></item>
+/// </list>
+/// <para>
+/// The storage is reinterpreted with <see cref="Unsafe"/> here, rather than by casting the cell through
+/// <see cref="Object"/> as <see cref="AtomicExtensions"/> does, because that cast fails for enums.
+/// Generics are invariant, so an <c>Atomic&lt;Access&gt;</c> is not an <c>Atomic&lt;Int32&gt;</c> even when
+/// <c>Access</c> is backed by <see cref="Int32"/>. The field is reinterpreted instead, the way
+/// <see cref="Atomic{T}"/> does internally, under a size test rather than a type test.
 /// </para>
 /// <para>
-/// Reinterpreting the storage with <see cref="Unsafe"/> rather than casting the cell through
-/// <see cref="Object"/> is the one place that idiom cannot reach. <c>(Atomic&lt;Int32&gt;)(Object)</c> a
-/// cell of an enum and the cast fails: generics are invariant and <c>Atomic&lt;Access&gt;</c> is not
-/// <c>Atomic&lt;Int32&gt;</c>, whatever the enum is backed by. So the field is reinterpreted the way
-/// <see cref="Atomic{T}"/> reinterprets it internally, under a size test rather than a type test.
-/// </para>
-/// <para>
-/// The values returned follow <see cref="Interlocked"/>, as the operator-constrained ones do:
-/// <see cref="And"/>, <see cref="Or"/> and <see cref="Xor"/> return the old value.
+/// Return values follow <see cref="Interlocked"/>, as in <see cref="AtomicExtensions"/>: all three return
+/// the old value.
 /// </para>
 /// </remarks>
 public static class AtomicEnumExtensions
 {
-	/// <summary>Replaces the value with its bitwise and against <paramref name="value"/>.</summary>
+	/// <summary>Atomically clears every flag not set in <paramref name="value"/> (a bitwise AND).</summary>
 	/// <typeparam name="T">The type of the value held by the cell.</typeparam>
-	/// <param name="atomic">The cell to mask.</param>
-	/// <param name="value">The mask.</param>
+	/// <param name="atomic">The cell to clear flags in.</param>
+	/// <param name="value">The flags to keep.</param>
 	/// <returns>The old value, as <see cref="Interlocked.And(ref Int32, Int32)"/> does.</returns>
 	/// <exception cref="ArgumentNullException"><paramref name="atomic"/> is null.</exception>
 	public static T And<T>(this Atomic<T> atomic, T value) where T : struct, Enum
@@ -77,10 +84,10 @@ public static class AtomicEnumExtensions
 		}
 	}
 
-	/// <summary>Replaces the value with its bitwise or against <paramref name="value"/>.</summary>
+	/// <summary>Atomically sets every flag that is set in <paramref name="value"/> (a bitwise OR).</summary>
 	/// <typeparam name="T">The type of the value held by the cell.</typeparam>
-	/// <param name="atomic">The cell to set bits in.</param>
-	/// <param name="value">The bits to set.</param>
+	/// <param name="atomic">The cell to set flags in.</param>
+	/// <param name="value">The flags to set.</param>
 	/// <returns>The old value, as <see cref="Interlocked.Or(ref Int32, Int32)"/> does.</returns>
 	/// <exception cref="ArgumentNullException"><paramref name="atomic"/> is null.</exception>
 	public static T Or<T>(this Atomic<T> atomic, T value) where T : struct, Enum
@@ -110,15 +117,15 @@ public static class AtomicEnumExtensions
 		}
 	}
 
-	/// <summary>Replaces the value with its bitwise exclusive or against <paramref name="value"/>.</summary>
+	/// <summary>Atomically flips every flag that is set in <paramref name="value"/> (a bitwise XOR).</summary>
 	/// <typeparam name="T">The type of the value held by the cell.</typeparam>
-	/// <param name="atomic">The cell to flip bits in.</param>
-	/// <param name="value">The bits to flip.</param>
-	/// <returns>The old value, matching <see cref="And"/> and <see cref="Or"/>.</returns>
+	/// <param name="atomic">The cell to flip flags in.</param>
+	/// <param name="value">The flags to flip.</param>
+	/// <returns>The old value, like <see cref="And"/> and <see cref="Or"/>.</returns>
 	/// <exception cref="ArgumentNullException"><paramref name="atomic"/> is null.</exception>
 	/// <remarks>
-	/// A loop at every width, for the reason <see cref="AtomicExtensions"/> gives: arm64 has
-	/// <c>ldeoral</c> and nothing in C# reaches it, <see cref="Interlocked"/> having no exclusive or.
+	/// Always a compare-exchange loop. arm64 has an atomic exclusive or (<c>ldeoral</c>), but
+	/// <see cref="Interlocked"/> does not expose one and nothing else in C# reaches it.
 	/// </remarks>
 	public static T Xor<T>(this Atomic<T> atomic, T value) where T : struct, Enum
 	{
@@ -133,36 +140,41 @@ public static class AtomicEnumExtensions
 		}
 	}
 
-	/// <summary>Views the cell's field as the low 4 bytes of the word it is seated in.</summary>
+	/// <summary>Treats the cell's field as the first 4 bytes of the word it is stored in.</summary>
 	/// <typeparam name="T">The enum type.</typeparam>
 	/// <param name="value">The field to view.</param>
-	/// <returns>The same storage, seen as an <see cref="Int32"/>.</returns>
+	/// <returns>The same storage, as an <see cref="Int32"/>.</returns>
 	/// <remarks>
-	/// Only ever pointed at <c>Atomic&lt;T&gt;.Storage</c>, which is a whole word however narrow
-	/// <typeparamref name="T"/> is. Pointing it at a <typeparamref name="T"/> of its own would read past
-	/// the end of one — which is why the masks are built by <see cref="Widen{TView,T}"/> instead.
+	/// Only use this on <c>Atomic&lt;T&gt;.Storage</c>, which always has a whole word behind it however
+	/// narrow <typeparamref name="T"/> is. On any other 1- or 2-byte enum it would read past the end of the
+	/// value, which is why masks are built with <see cref="Widen{TView,T}"/> instead.
 	/// </remarks>
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	private static ref Int32 AsInt32<T>(ref T value) where T : struct, Enum => ref Unsafe.As<T, Int32>(ref value);
 
-	/// <summary>Views a reference to an enum as a reference to the 8 bytes it occupies.</summary>
+	/// <summary>Treats a reference to an 8-byte enum as a reference to an <see cref="Int64"/>.</summary>
 	/// <typeparam name="T">The enum type.</typeparam>
 	/// <param name="value">The value to view.</param>
-	/// <returns>The same storage, seen as an <see cref="Int64"/>.</returns>
+	/// <returns>The same storage, as an <see cref="Int64"/>.</returns>
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	private static ref Int64 AsInt64<T>(ref T value) where T : struct, Enum => ref Unsafe.As<T, Int64>(ref value);
 
-	/// <summary>Widens an enum into a view, zeroing whatever it does not occupy.</summary>
+	/// <summary>Copies an enum into a wider view, zeroing the bytes it does not fill.</summary>
 	/// <typeparam name="TView">The view to widen into.</typeparam>
 	/// <typeparam name="T">The enum type.</typeparam>
 	/// <param name="value">The value to widen.</param>
-	/// <returns>Its bits, zero extended to the width of the view.</returns>
+	/// <returns>The bits of the value, zero-extended to the width of the view.</returns>
 	/// <remarks>
-	/// A byte copy rather than a numeric conversion, so that the value lands at the same offset within
-	/// the view that it occupies within the cell's word. A mask built by truncating a wider number would
-	/// agree with the storage only where the low byte is also the first byte, which is not every runtime
-	/// .NET targets. Always in bounds: an enum is backed by an integral type, and the widest of those is
-	/// 8 bytes.
+	/// <para>
+	/// This copies bytes rather than converting numerically, so the value lands at the same offset in the
+	/// view as it occupies in the cell's word. A numeric conversion would only line up where the
+	/// low-order byte comes first in memory, which is not true of every platform .NET targets. It also
+	/// zero-extends where a numeric conversion of a signed enum would sign-extend, and a sign-extended
+	/// mask would set the spare bytes under <see cref="Or"/>.
+	/// </para>
+	/// <para>
+	/// The copy is always in bounds: an enum is backed by an integral type, and the widest is 8 bytes.
+	/// </para>
 	/// </remarks>
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	private static TView Widen<TView, T>(T value) where TView : unmanaged where T : struct, Enum
@@ -172,11 +184,11 @@ public static class AtomicEnumExtensions
 		return view;
 	}
 
-	/// <summary>Narrows a view back to an enum, ignoring the bits it does not occupy.</summary>
+	/// <summary>Reads an enum back out of a view, ignoring the bytes it does not fill.</summary>
 	/// <typeparam name="T">The enum type.</typeparam>
 	/// <typeparam name="TView">The view to narrow from.</typeparam>
-	/// <param name="view">A view previously produced by <see cref="Widen{TView,T}"/>.</param>
-	/// <returns>The value those bits stand for.</returns>
+	/// <param name="view">A view produced by <see cref="Widen{TView,T}"/>.</param>
+	/// <returns>The value stored in the view.</returns>
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	private static T Narrow<T, TView>(TView view) where T : struct, Enum where TView : unmanaged =>
 		Unsafe.ReadUnaligned<T>(ref Unsafe.As<TView, Byte>(ref view));

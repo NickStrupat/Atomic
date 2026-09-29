@@ -5,28 +5,27 @@ using NickStrupat;
 namespace Benchmarks;
 
 /// <summary>
-/// One operation at a time, on a cell nobody else is touching, for each category of
-/// <typeparamref name="T"/> the implementations treat differently.
+/// Measures single operations on an uncontended cell, for each category of <typeparamref name="T"/> that
+/// the implementations handle differently.
 /// </summary>
 /// <typeparam name="T">The type of the value held by the cell.</typeparam>
 /// <remarks>
 /// <para>
-/// The categories are what decides a strategy, so they are what the comparison is organised around.
-/// A cell can hold a value in the word it already has, hold a reference in that word, or hold neither
-/// and need somewhere else to put it — and the awkward sizes are where the implementations first stop
-/// agreeing, because a 3-byte value is only swappable if a cell is laid out so it can be widened.
+/// The categories are what decide a cell's strategy, so the comparison is organised around them. A cell
+/// can keep a value in the word it already has, keep a reference there, or need somewhere else for the
+/// value. Odd sizes are where the implementations first differ: a 3-byte value can only be swapped in
+/// place by a cell laid out so it can be widened to a word.
 /// </para>
 /// <para>
-/// One generic class rather than one class per category: five copies differing in a type name is five
-/// chances for a category to be measured slightly differently from its neighbours and for the
-/// difference to be read as a result. It also rules out arithmetic in the loop. An earlier version
-/// accumulated what it read, which for <see cref="Decimal"/> measured decimal addition alongside the
-/// read and reported it as the cost of the read.
+/// This is one generic class rather than one class per category. Five near-identical copies would be
+/// five chances to measure a category slightly differently from the others and mistake that for a
+/// result. Being generic also rules out arithmetic in the loop: an earlier version summed what it read,
+/// which for <see cref="Decimal"/> added the cost of decimal addition to the cost of the read.
 /// </para>
 /// <para>
 /// Each benchmark repeats its operation <see cref="Operations"/> times and divides, because a single
-/// volatile read costs less than the harness overhead subtracted from it and reports as zero. Every
-/// comparand is the value the cell already holds, so the exchanges measured are the ones that succeed.
+/// volatile read costs less than the harness overhead subtracted from it, and would report as zero.
+/// Every comparand is the value the cell already holds, so the compare-exchanges measured all succeed.
 /// </para>
 /// </remarks>
 [MemoryDiagnoser, ShortRunJob, CategoriesColumn]

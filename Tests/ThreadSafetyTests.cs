@@ -5,21 +5,28 @@ using NickStrupat;
 namespace Tests;
 
 /// <summary>
-/// What each implementation has to hold up under concurrent access. Every implementation runs the whole
-/// suite through its own subclass, so a candidate cannot win on speed by being quietly unsafe.
+/// The guarantees every implementation must keep under concurrent access. Each implementation runs the
+/// whole suite through its own subclass, so a candidate cannot win on speed by being quietly unsafe.
 /// </summary>
 /// <remarks>
 /// <para>
-/// These falsify rather than prove. A race that never happened to be scheduled is indistinguishable
-/// from one that cannot happen, so a passing run is evidence and not a proof — which is why each test
-/// below is built to make the window it is looking for as wide as it can: threads released together on
-/// a barrier rather than started in sequence, values chosen so that a torn or lost one is visible
-/// rather than plausible, and enough repetitions that a narrow window is hit rather than missed.
+/// These tests can find bugs but cannot prove their absence: a race that was never scheduled looks the
+/// same as one that cannot happen. So each test makes the window it looks for as wide as possible:
 /// </para>
+/// <list type="bullet">
+/// <item><description>
+/// Threads are released together from a barrier rather than started one by one.
+/// </description></item>
+/// <item><description>
+/// Values are chosen so that a torn or lost value is obviously wrong, not plausible.
+/// </description></item>
+/// <item><description>
+/// There are enough repetitions that a narrow window is hit rather than missed.
+/// </description></item>
+/// </list>
 /// <para>
-/// The ordering tests have real teeth on the arm64 this is developed on, where the hardware genuinely
-/// reorders, and much less on x86, where the hardware mostly does not. A green run on x86 says less
-/// than a green run here.
+/// The memory-ordering tests are much stronger on arm64 (where this is developed), whose hardware really
+/// does reorder, than on x86, whose hardware mostly does not. A pass on x86 says less than a pass here.
 /// </para>
 /// </remarks>
 public abstract class ThreadSafetyTests
@@ -28,7 +35,7 @@ public abstract class ThreadSafetyTests
 	private const Int32 IncrementsPerThread = 10_000;
 	private const Int64 Total = Threads * (Int64)IncrementsPerThread;
 
-	/// <summary>How long the tests that race a writer against a reader run for.</summary>
+	/// <summary>How long each test that races a writer against a reader runs.</summary>
 	private static readonly TimeSpan Window = TimeSpan.FromMilliseconds(250);
 
 	/// <summary>Creates a cell of the implementation under test.</summary>
@@ -289,10 +296,10 @@ public abstract class ThreadSafetyTests
 		torn.Should().BeEmpty();
 	}
 
-	/// <summary>A value unique to one thread and one iteration, and never zero.</summary>
+	/// <summary>Makes a value unique to one thread and one iteration, and never zero.</summary>
 	/// <param name="thread">The thread the value belongs to.</param>
 	/// <param name="index">The iteration the value belongs to.</param>
-	/// <returns>A token distinct from every other token and from the value a cell starts holding.</returns>
+	/// <returns>A token different from every other token and from a cell's initial value of zero.</returns>
 	private static Int64 Token(Int32 thread, Int32 index) => ((Int64)(thread + 1) << 32) | (UInt32)index;
 
 	/// <summary>Applies <paramref name="next"/> to the cell <see cref="IncrementsPerThread"/> times.</summary>
@@ -310,35 +317,34 @@ public abstract class ThreadSafetyTests
 			}
 	}
 
-	/// <summary>Runs each of <paramref name="bodies"/> on a thread of its own and waits for all of them.</summary>
+	/// <summary>Runs each of <paramref name="bodies"/> on its own thread and waits for them all.</summary>
 	/// <param name="bodies">The work to run, one body per thread.</param>
 	private static void RunConcurrently(params Action[] bodies) =>
 		Join(bodies.Select(body => new Thread(() => body()) { IsBackground = true }).ToArray());
 
 	/// <summary>
-	/// Runs <paramref name="body"/> on <see cref="Threads"/> threads of its own and waits for all of them.
+	/// Runs <paramref name="body"/> on <see cref="Threads"/> new threads, released together, and waits for
+	/// them all.
 	/// </summary>
 	/// <param name="body">
-	/// The work to run, given the index of the thread running it and a barrier every thread reaches the
-	/// same number of times, for keeping them together once they have started.
+	/// The work to run. It receives the index of its thread and a barrier that every thread must signal
+	/// the same number of times, which it can use to keep the threads in step once they have started.
 	/// </param>
 	/// <remarks>
 	/// <para>
-	/// Dedicated threads rather than the pool, and not as a matter of taste. Under a pool busy with the
-	/// rest of the suite these bodies get run one after another, the race never happens, and the test
-	/// passes without having tested anything — which is exactly what
-	/// <see cref="ThreadSafetySuiteTests"/> caught when this used <see cref="Task.Run(Action)"/>.
+	/// This uses dedicated threads rather than the thread pool on purpose. When the pool is busy with the
+	/// rest of the suite, it runs these bodies one after another, the race never happens, and the test
+	/// passes without testing anything. <see cref="ThreadSafetySuiteTests"/> caught exactly that when this
+	/// used <see cref="Task.Run(Action)"/>.
 	/// </para>
 	/// <para>
-	/// The barrier is there for the same reason. Starting a thread costs more than a short body takes to
-	/// run, so threads started in a loop finish in that loop too, one after another, having never once
-	/// been in each other's way. Releasing them together is what makes the contention real, and this cost
-	/// the exchange test below almost all of its power before it was added.
+	/// The starting barrier is there for the same reason. Starting a thread takes longer than a short body
+	/// takes to run, so threads started in a loop would each finish before the next began and never
+	/// contend. Before the barrier was added, the exchange test lost almost all of its power this way.
 	/// </para>
 	/// <para>
-	/// Releasing them together is not enough on its own either. On a machine busy with the rest of the
-	/// suite the scheduler takes a thread away mid-run and the others finish without it, so the body is
-	/// handed the barrier as well and can re-sync as it goes.
+	/// Starting together is not enough either. On a busy machine the scheduler pauses a thread mid-run and
+	/// the others finish without it, so the body also gets the barrier and can re-synchronise as it goes.
 	/// </para>
 	/// </remarks>
 	private static void RunOnDedicatedThreads(Action<Int32, Barrier> body)
@@ -353,7 +359,7 @@ public abstract class ThreadSafetyTests
 			.ToArray());
 	}
 
-	/// <summary>Starts every thread and waits for all of them.</summary>
+	/// <summary>Starts every thread, then waits for them all to finish.</summary>
 	/// <param name="threads">The threads to run.</param>
 	private static void Join(Thread[] threads)
 	{
@@ -365,8 +371,7 @@ public abstract class ThreadSafetyTests
 }
 
 /// <summary>
-/// The shipping cell, held to the same guarantees as the candidates through
-/// <see cref="AtomicAdapter{T}"/>.
+/// Runs the thread-safety suite against the shipping cell, through <see cref="AtomicAdapter{T}"/>.
 /// </summary>
 public sealed class AtomicThreadSafetyTests : ThreadSafetyTests
 {

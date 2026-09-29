@@ -4,78 +4,84 @@ using System.Runtime.InteropServices;
 namespace NickStrupat;
 
 /// <summary>
-/// A cell whose value can be read, written, and swapped atomically.
+/// A cell holding a value that can be read, written, exchanged and compare-exchanged atomically.
 /// </summary>
 /// <typeparam name="T">The type of the value held by the cell.</typeparam>
 /// <remarks>
 /// <para>
-/// The value lives in a single field of type <typeparamref name="T"/>, so the runtime lays each cell
-/// out to fit and nothing is ever boxed. Any value holding no references and no wider than a machine
-/// word is read and written through a word sized view of that field, whatever its own size or
-/// alignment — including sizes no instruction matches, such as 3 bytes.
+/// How the cell reaches its value depends only on <typeparamref name="T"/>, and is fixed when the code
+/// is compiled. There are four strategies:
+/// </para>
+/// <list type="bullet">
+/// <item><description>
+/// A value with no references that fits in a word (<see cref="IntPtr.Size"/> bytes) is read and written
+/// as one whole word, whatever its own size — including sizes no instruction matches, such as 3 bytes.
+/// </description></item>
+/// <item><description>
+/// <see cref="Int64"/> and <see cref="UInt64"/> on a 32-bit runtime use the 8-byte
+/// <see cref="Interlocked"/> methods.
+/// </description></item>
+/// <item><description>
+/// A reference type uses the <see cref="Object"/> overloads, which keep the GC write barrier.
+/// </description></item>
+/// <item><description>
+/// Everything else — a value wider than those, or one containing references — is guarded by a lock on
+/// the cell. Readers take the lock as well as writers.
+/// </description></item>
+/// </list>
+/// <para>
+/// The word-sized view relies on two facts about the runtime, and both need <c>storage</c> to be the
+/// only field this class declares. First, a lone field starts one word into the object, and objects are
+/// word-aligned, so the field is word-aligned. Second, an object's minimum size leaves a whole word for
+/// the field, so a value narrower than a word has spare bytes after it that nothing else uses. Every
+/// write zeroes those spare bytes, so a given value always has the same bit pattern, and
+/// <see cref="CompareExchange"/> can compare whole words.
 /// </para>
 /// <para>
-/// Two facts about the runtime allow that, and both depend on <c>storage</c> being the only field this
-/// class declares. A lone field begins one word into the object and objects are word aligned, so the
-/// view is aligned; and the minimum size of an object leaves a whole word there, so a 3-byte value
-/// has slack behind it which belongs to nobody. Writes zero the slack, so the bit pattern of a given
-/// value is always the same and <see cref="CompareExchange"/> compares something meaningful.
+/// The view is a word rather than 8 bytes because both facts are stated in words. At 64 bits a word is
+/// 8 bytes, so every unmanaged value up to 8 bytes is swapped in place. At 32 bits a word is 4 bytes,
+/// and an 8-byte view would be neither aligned nor atomic: ECMA-335 I.12.6.2 only aligns an 8-byte value
+/// as far as a <c>native int</c> needs, and I.12.6.6 only promises atomic access up to that width.
 /// </para>
 /// <para>
-/// Both facts are about a word rather than about 8 bytes, which is why a word is what the view is.
-/// At 64 bits that is 8 bytes and every unmanaged value up to that size is swapped where it
-/// lies; at 32 it is 4, and a wider value has neither the alignment nor the slack. ECMA-335
-/// I.12.6.2 aligns an 8-byte value only on the boundary a <c>native int</c> needs, and I.12.6.6
-/// grants atomicity only up to that same width, so there the 8-byte view would be both misaligned
-/// and torn.
+/// <see cref="Int64"/> and <see cref="UInt64"/> are the exception at 32 bits. The runtime places fields
+/// of these two types on an 8-byte boundary wherever the hardware's instructions need it, which is what
+/// lets <see cref="Interlocked"/> work on them there at all. <see cref="Volatile"/> is not enough — an
+/// 8-byte volatile read or write can tear on a 32-bit runtime — so reads use
+/// <see cref="Interlocked.Read(ref readonly Int64)"/> and writes use
+/// <see cref="Interlocked.Exchange(ref Int64, Int64)"/>. No other 8-byte type gets this path, because it
+/// needs the view to be exactly the value and the type's equality to be exactly its bits.
 /// </para>
 /// <para>
-/// The 8-byte integers are the exception, because the runtime already owes them more than ECMA
-/// requires: a field of type <see cref="Int64"/> or <see cref="UInt64"/> is seated on an 8-byte
-/// boundary wherever the hardware's instructions demand it, which is what lets
-/// <see cref="Interlocked"/> be applied to one on a 32-bit runtime at all. Only through
-/// <see cref="Interlocked"/>, though — an 8-byte <see cref="Volatile"/> read or write can tear
-/// there — so on that path the read is <see cref="Interlocked.Read(ref readonly Int64)"/> and the
-/// write is <see cref="Interlocked.Exchange(ref Int64, Int64)"/>. No other 8-byte type joins them:
-/// the view has to be the value exactly, and the type's equality has to be its bits.
+/// Do not add a second field. The runtime may place it first, which moves the value off a word boundary
+/// (raising <see cref="DataMisalignedException"/> on arm64) and takes away the spare bytes. The alignment
+/// is checked by a test that takes the field's address, not at run time: a run-time check would add a
+/// static load and a branch to every access, and NativeAOT cannot fold it away. This is also why the lock
+/// is taken on the cell itself rather than on a private lock object, which would be a second field. The
+/// cost is that outside code locking on the cell can interfere with it.
 /// </para>
 /// <para>
-/// Adding a second field breaks both facts at once: the runtime is free to seat that field first, which
-/// pushes the value off a word boundary and raises <see cref="DataMisalignedException"/> on arm64. The
-/// bet is kept honest by a test that takes the address of the field and looks, rather than by a run
-/// time check, because branching on it costs every access a static load and a branch that NativeAOT
-/// cannot fold away.
-/// </para>
-/// <para>
-/// Where the value is kept decides how it is swapped, and nothing else. It does not decide how a
-/// comparand is compared: a reference is compared by identity, a value type with
-/// <see cref="EqualityComparer{T}.Default"/>, and neither answer moves when the same type gains a
-/// field and crosses to the other strategy.
-/// </para>
-/// <para>
-/// A reference is swapped through the object overloads, which keep the GC write barrier. Whatever none
-/// of the above covers — a value too wide for them, or one holding references — is guarded by a monitor
-/// on the cell, so readers block as well as writers. Locking on the instance means outside code holding
-/// a reference to this cell can interfere with it; the alternative, a private lock object, is a second
-/// field, which this design cannot afford.
+/// The strategy decides how the value is swapped, not how a comparand is compared. A reference is
+/// compared by identity and a value type with <see cref="EqualityComparer{T}.Default"/>, under every
+/// strategy, so a type that gains a field and moves to another strategy still matches the same comparands.
 /// </para>
 /// </remarks>
 public sealed class Atomic<T>
 {
 	/// <summary>
-	/// The value. This must remain the only field in the class: see the remarks on
-	/// <see cref="Atomic{T}"/> for what a second one would break.
+	/// The value. This must stay the only field in the class; the remarks on <see cref="Atomic{T}"/>
+	/// explain what a second field would break.
 	/// </summary>
 	private T storage;
 
-	/// <summary>The value, by reference, for anything that applies an instruction to it directly.</summary>
+	/// <summary>A reference to the value, for code that applies an instruction to it directly.</summary>
 	/// <remarks>
-	/// Handing this to <see cref="Interlocked"/> is only sound for a value the hardware has an
-	/// instruction for, which is why <see cref="AtomicExtensions"/> reaches for it only under a
-	/// <c>typeof</c> test naming one of those types — and only where <see cref="IsInline"/> says the cell
-	/// swaps that field itself rather than standing behind its monitor. The two agree at either word
-	/// size, <see cref="IsEightByteIntegerOn32Bit"/> being the case where the cell reaches the field with
-	/// the same locked instructions the extension does.
+	/// Passing this to <see cref="Interlocked"/> is only safe when two things hold: <typeparamref name="T"/>
+	/// is a type the hardware has an instruction for, and <see cref="IsInline"/> is true, meaning the cell
+	/// swaps the field itself rather than guarding it with its lock. <see cref="AtomicExtensions"/> checks
+	/// both before using it. The two conditions agree at either word size: under
+	/// <see cref="IsEightByteIntegerOn32Bit"/>, the cell uses the same locked instructions on the field that
+	/// the extension does.
 	/// </remarks>
 	internal ref T Storage => ref storage;
 
@@ -83,23 +89,26 @@ public sealed class Atomic<T>
 	/// <param name="value">The initial value.</param>
 	public Atomic(T value) => storage = value;
 
-	/// <summary>Gets a value indicating whether the value is read and written without a lock.</summary>
+	/// <summary>Gets a value indicating whether the cell reads and writes without taking a lock.</summary>
 	public static Boolean IsLockFree => IsInline || IsReference;
 
-	/// <summary>Gets a value indicating whether the value is kept in the field, swapped where it lies.</summary>
+	/// <summary>
+	/// Gets a value indicating whether the value is swapped in place in the field, rather than through a
+	/// reference or under the lock.
+	/// </summary>
 	/// <remarks>
 	/// <para>
-	/// Every term folds to a constant the moment <typeparamref name="T"/> is known, so a cell compiles to
-	/// one strategy with no test left in it. That is why the alignment of the field is asserted by a test
-	/// rather than consulted here: it can only be learned by reading the address of an object, which the
-	/// JIT can fold after the type initializer has run but which NativeAOT cannot evaluate at all when it
-	/// builds the image. A single term it cannot fold keeps the monitor path live, and with it a
-	/// try/finally that pushes this past the size the compiler will inline.
+	/// Every term is a constant once <typeparamref name="T"/> is known, so each instantiation compiles down
+	/// to a single strategy with no test left in it. That rules out checking the field's alignment here:
+	/// it can only be learned by taking an object's address, which the JIT can fold after the type
+	/// initializer has run but NativeAOT cannot evaluate when it builds the image. A single term that does
+	/// not fold keeps the lock path alive, and its <c>try</c>/<c>finally</c> makes the method too big to
+	/// inline.
 	/// </para>
 	/// <para>
-	/// <see cref="AtomicExtensions"/> consults this before issuing an interlocked instruction against
-	/// <see cref="Storage"/>, which is why it is visible past this class. An instruction issued where this
-	/// is false would be a second writer to a field the cell believes only its monitor touches, and the two
+	/// This is <see langword="internal"/> because <see cref="AtomicExtensions"/> checks it before applying
+	/// an interlocked instruction to <see cref="Storage"/>. If it applied one while this was false, the
+	/// instruction would be a second writer to a field the cell believes only its lock guards, and the two
 	/// would not exclude each other.
 	/// </para>
 	/// </remarks>
@@ -109,12 +118,14 @@ public sealed class Atomic<T>
 		get => FitsInWord || IsEightByteIntegerOn32Bit;
 	}
 
-	/// <summary>Gets a value indicating whether the value fits the word the field is seated on.</summary>
+	/// <summary>
+	/// Gets a value indicating whether the value holds no references and fits in the word the field
+	/// occupies.
+	/// </summary>
 	/// <remarks>
-	/// The size is measured against <see cref="IntPtr"/>.<see cref="IntPtr.Size"/> rather than against
-	/// eight, because the word is what the field's alignment and the object's minimum size are both
-	/// stated in. Both are constants to either compiler, so saying it costs nothing, and a 64-bit
-	/// build reads exactly as it did when this said 8.
+	/// The size is compared with <see cref="IntPtr"/>.<see cref="IntPtr.Size"/> rather than with 8, because
+	/// the field's alignment and the object's minimum size are both measured in words. Both are constants
+	/// to either compiler, so this costs nothing, and on a 64-bit build it is exactly the same test as 8.
 	/// </remarks>
 	private static Boolean FitsInWord
 	{
@@ -123,19 +134,23 @@ public sealed class Atomic<T>
 		       && Unsafe.SizeOf<T>() <= IntPtr.Size;
 	}
 
-	/// <summary>Gets a value indicating whether the value is an 8-byte integer past the word.</summary>
+	/// <summary>
+	/// Gets a value indicating whether the value is an <see cref="Int64"/> or <see cref="UInt64"/> on a
+	/// runtime whose word is narrower than 8 bytes.
+	/// </summary>
 	/// <remarks>
 	/// <para>
-	/// <see cref="Int64"/> and <see cref="UInt64"/> earn a view the word does not cover, because a field
-	/// of either is seated on an 8-byte boundary wherever the instructions require it — which is what
-	/// makes them reachable by <see cref="Interlocked"/> there at all. Nothing here can establish that of
-	/// an arbitrary 8-byte value, so nothing else is offered it.
+	/// These two types get an 8-byte view even though it is wider than the word, because the runtime
+	/// places a field of either type on an 8-byte boundary wherever the instructions require it. That is
+	/// what makes <see cref="Interlocked"/> usable on them at 32 bits. Nothing here can prove the same for
+	/// an arbitrary 8-byte value, so no other type gets this path.
 	/// </para>
 	/// <para>
-	/// Naming the two types rather than testing the size is also what keeps the compare-exchange on this
-	/// path honest without a tail. The view is exactly the value, so there is no slack to zero, and an
-	/// integer's equality is its bits, so a miss is a miss and there is nothing to ask the type about.
-	/// <see cref="Double"/> is 8 bytes and is not here for the second reason, not the first.
+	/// Naming the two types, rather than testing the size, also means the compare-exchange on this path
+	/// needs no fallback. The view is exactly the value, so there are no spare bytes to zero, and an
+	/// integer's equality is exactly its bits, so a mismatch in bits is a genuine mismatch.
+	/// <see cref="Double"/> is also 8 bytes but is excluded for that second reason: its equality is not its
+	/// bits.
 	/// </para>
 	/// </remarks>
 	private static Boolean IsEightByteIntegerOn32Bit
@@ -151,14 +166,15 @@ public sealed class Atomic<T>
 		get => !typeof(T).IsValueType;
 	}
 
-	/// <summary>Widens a value to a whole view, zeroing whatever the value does not occupy.</summary>
-	/// <typeparam name="TView">The view the field is swapped through.</typeparam>
+	/// <summary>Copies a value into a wider view, zeroing the bytes the value does not fill.</summary>
+	/// <typeparam name="TView">The type the field is swapped as.</typeparam>
 	/// <param name="value">The value to widen.</param>
-	/// <returns>The bits of the value, zero extended to the width of the view.</returns>
+	/// <returns>The bits of the value, zero-extended to the width of the view.</returns>
 	/// <remarks>
-	/// The caller owes this a <typeparamref name="TView"/> at least as wide as <typeparamref name="T"/>,
-	/// which both strategies establish before they get here: <see cref="FitsInWord"/> measures the size
-	/// against the view, and <see cref="IsEightByteIntegerOn32Bit"/> names two types the view is exactly.
+	/// <typeparamref name="TView"/> must be at least as wide as <typeparamref name="T"/>, or this writes past
+	/// the end of it. Both callers guarantee that before getting here: <see cref="FitsInWord"/> checks the
+	/// size against the view, and <see cref="IsEightByteIntegerOn32Bit"/> only admits two types exactly as
+	/// wide as the view.
 	/// </remarks>
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	private static TView Widen<TView>(T value) where TView : unmanaged
@@ -168,16 +184,16 @@ public sealed class Atomic<T>
 		return view;
 	}
 
-	/// <summary>Narrows a view back to a value, ignoring the bits the value does not occupy.</summary>
-	/// <typeparam name="TView">The view the field is swapped through.</typeparam>
-	/// <param name="view">A view previously produced by <see cref="Widen{TView}"/>.</param>
-	/// <returns>The value those bits stand for.</returns>
+	/// <summary>Reads a value back out of a view, ignoring the bytes the value does not fill.</summary>
+	/// <typeparam name="TView">The type the field is swapped as.</typeparam>
+	/// <param name="view">A view produced by <see cref="Widen{TView}"/>.</param>
+	/// <returns>The value stored in the view.</returns>
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	private static T Narrow<TView>(TView view) where TView : unmanaged =>
 		Unsafe.ReadUnaligned<T>(ref Unsafe.As<TView, Byte>(ref view));
 
 	/// <summary>Reads the value held by the cell.</summary>
-	/// <returns>The value held at some point during the call.</returns>
+	/// <returns>The value the cell held at some point during the call.</returns>
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	public T Read()
 	{
@@ -211,7 +227,7 @@ public sealed class Atomic<T>
 				storage = value;
 	}
 
-	/// <summary>Sets the value and returns the one it replaced, as a single atomic operation.</summary>
+	/// <summary>Stores a value and returns the one it replaced, as a single atomic operation.</summary>
 	/// <param name="value">The value to store.</param>
 	/// <returns>The value held before the call.</returns>
 	public T Exchange(T value)
@@ -235,20 +251,30 @@ public sealed class Atomic<T>
 	}
 
 	/// <summary>
-	/// Sets the value to <paramref name="value"/> if the value currently held matches
-	/// <paramref name="comparand"/>, and returns the value held before the call.
+	/// Stores <paramref name="value"/> if the cell currently holds <paramref name="comparand"/>, and returns
+	/// the value held before the call either way.
 	/// </summary>
-	/// <param name="value">The value to store when the comparison succeeds.</param>
+	/// <param name="value">The value to store if the comparison succeeds.</param>
 	/// <param name="comparand">The value the cell is expected to hold.</param>
 	/// <returns>The value held before the call.</returns>
 	/// <remarks>
-	/// A reference is compared by identity and by nothing else. A value type is compared with
-	/// <see cref="EqualityComparer{T}.Default"/> whatever its width and wherever the cell keeps it, so
-	/// two values the type calls equal match here even when their bits differ — and two values with the
-	/// same bits match even where the type calls them unequal, which is the only way a cell can honour a
-	/// comparand naming a value it is holding. Prefer
-	/// <see cref="TryCompareExchange"/> in a loop rather than judging from the value returned whether
-	/// the exchange happened.
+	/// <para>
+	/// A reference is compared by identity only. A value type matches if either of these is true, whatever
+	/// its width and whichever strategy the cell uses:
+	/// </para>
+	/// <list type="bullet">
+	/// <item><description>
+	/// <see cref="EqualityComparer{T}.Default"/> says the two are equal, even if their bits differ.
+	/// </description></item>
+	/// <item><description>
+	/// The two have identical bits, even if the type says they are unequal. Without this, a cell could
+	/// refuse a comparand naming the exact value it holds.
+	/// </description></item>
+	/// </list>
+	/// <para>
+	/// To find out whether the exchange happened, call <see cref="TryCompareExchange"/> in a loop rather
+	/// than comparing the returned value yourself.
+	/// </para>
 	/// </remarks>
 	public T CompareExchange(T value, T comparand)
 	{
@@ -257,19 +283,19 @@ public sealed class Atomic<T>
 	}
 
 	/// <summary>
-	/// Does what <see cref="CompareExchange"/> does, and reports whether the exchange happened rather
-	/// than leaving it to be inferred from the value returned.
+	/// Does what <see cref="CompareExchange"/> does, and also reports whether the value was stored.
 	/// </summary>
-	/// <param name="value">The value to store when the comparison succeeds.</param>
+	/// <param name="value">The value to store if the comparison succeeds.</param>
 	/// <param name="comparand">The value the cell is expected to hold.</param>
 	/// <param name="previous">The value held before the call.</param>
-	/// <returns><see langword="true"/> when the value was stored, otherwise <see langword="false"/>.</returns>
+	/// <returns><see langword="true"/> if the value was stored; otherwise <see langword="false"/>.</returns>
 	/// <remarks>
-	/// A loop retrying a failed exchange cannot tell the two apart from <paramref name="previous"/>
-	/// alone. The cell compares with <see cref="EqualityComparer{T}.Default"/> and a caller reaching for
-	/// <c>==</c> does not: a cell holding <see cref="Double.NaN"/> stores over it when handed a
-	/// <see cref="Double.NaN"/> comparand, and a caller judging that by the value it got back reads the
-	/// swap it just made as a failure, retries, and stores twice.
+	/// A retry loop cannot reliably tell success from failure by looking at <paramref name="previous"/>,
+	/// because the cell and the caller may compare differently. For example, the cell compares with
+	/// <see cref="EqualityComparer{T}.Default"/>, which calls <see cref="Double.NaN"/> equal to itself, so a
+	/// cell holding <see cref="Double.NaN"/> stores over it when given a <see cref="Double.NaN"/> comparand.
+	/// A caller checking the result with <c>==</c> would see <c>NaN != NaN</c>, decide the exchange had
+	/// failed, retry, and store twice.
 	/// </remarks>
 	public Boolean TryCompareExchange(T value, T comparand, out T previous)
 	{
@@ -317,62 +343,63 @@ public sealed class Atomic<T>
 		}
 	}
 
-	/// <summary>Whether a value the cell is holding is the value a comparand names.</summary>
-	/// <param name="held">The value read out of the cell.</param>
-	/// <param name="comparand">The value the caller expects it to be.</param>
-	/// <returns><see langword="true"/> when the two are the same value.</returns>
+	/// <summary>On the lock path, decides whether the value the cell holds is the comparand's value.</summary>
+	/// <param name="held">The value read from the cell.</param>
+	/// <param name="comparand">The value the caller expects.</param>
+	/// <returns><see langword="true"/> if the two are the same value.</returns>
 	/// <remarks>
 	/// <para>
-	/// Identical bits are the same value, whatever the type says, so bits are tried first and the type is
-	/// only asked when they differ. That is not an optimisation, it is what keeps this path answering
-	/// what the inline one answers: there the instruction compares bits before anything else can, and a
-	/// type that calls a value unequal to itself is stored over anyway. Asking the type first made a cell
-	/// refuse to exchange a value it was holding, and a retry loop offering that value back went round
-	/// forever.
+	/// Bits are compared first, and the type's equality is only asked if they differ. This is not an
+	/// optimisation. It makes the lock path give the same answer as the word path, where the instruction
+	/// compares bits before anything else runs, so a type that calls a value unequal to itself is stored
+	/// over anyway. When the type was asked first, a cell refused to exchange a value it was holding, and a
+	/// retry loop offering that value back spun forever.
 	/// </para>
 	/// <para>
-	/// Bits are compared only where they mean something. A value holding a reference is left to the type,
-	/// because reading the bits of one races a moving GC, and because the reference the type compares is
-	/// the thing that matters rather than the address it currently sits at.
+	/// Bits are only compared for a type with no references. A value holding a reference is left to its
+	/// type's equality: reading its bits races a moving GC, and what matters is the object referred to,
+	/// not the address it currently sits at.
 	/// </para>
 	/// </remarks>
 	private static Boolean HoldsTheSameValueAs(T held, T comparand) =>
 		(!RuntimeHelpers.IsReferenceOrContainsReferences<T>() && SameBits(held, comparand))
 		|| EqualityComparer<T>.Default.Equals(held, comparand);
 
-	/// <summary>Whether two values of an unmanaged type occupy the same bits, padding included.</summary>
+	/// <summary>Checks whether two values have exactly the same bytes, padding included.</summary>
 	/// <param name="a">One value.</param>
-	/// <param name="b">The other.</param>
-	/// <returns><see langword="true"/> when every byte matches.</returns>
+	/// <param name="b">The other value.</param>
+	/// <returns><see langword="true"/> if every byte matches.</returns>
 	private static Boolean SameBits(T a, T b) =>
 		MemoryMarshal.CreateReadOnlySpan(ref Unsafe.As<T, Byte>(ref a), Unsafe.SizeOf<T>())
 			.SequenceEqual(MemoryMarshal.CreateReadOnlySpan(ref Unsafe.As<T, Byte>(ref b), Unsafe.SizeOf<T>()));
 
 	/// <summary>
-	/// Finishes a compare-exchange whose single instruction did not match, for a value held in a word.
+	/// Finishes a compare-exchange on the word path after the instruction found different bits from the
+	/// comparand's.
 	/// </summary>
 	/// <param name="slot">The word the value is kept in.</param>
-	/// <param name="value">The value to store when the comparison succeeds.</param>
+	/// <param name="value">The value to store if the comparison succeeds.</param>
 	/// <param name="comparand">The value the cell is expected to hold.</param>
-	/// <param name="previousWord">The bits that instruction found.</param>
+	/// <param name="previousWord">The bits the instruction found.</param>
 	/// <param name="previous">The value held before the call.</param>
-	/// <returns><see langword="true"/> when the value was stored, otherwise <see langword="false"/>.</returns>
+	/// <returns><see langword="true"/> if the value was stored; otherwise <see langword="false"/>.</returns>
 	/// <remarks>
 	/// <para>
-	/// Bits differing is not the same as values differing: <c>-0.0</c> against <c>0.0</c>, a type whose
-	/// <see cref="Object.Equals(Object)"/> reads some of its fields and not others, or a value whose
-	/// padding arrived from somewhere that did not zero it. So the type is asked, and if it says equal,
-	/// the exchange is retried against the bits actually seen rather than the ones the caller offered.
+	/// Different bits do not always mean different values. Examples: <c>-0.0</c> and <c>0.0</c>; a type
+	/// whose <see cref="Object.Equals(Object)"/> ignores some of its fields; a value whose padding was not
+	/// zeroed where it came from. So this asks the type. If the type says equal, it retries the exchange
+	/// against the bits actually found in the cell, not the bits the caller passed.
 	/// </para>
 	/// <para>
-	/// Nothing is lost by trying the instruction first. Identical bits are the same value and
-	/// <see cref="Object.Equals(Object)"/> is required to be reflexive, so a match there is a match here
-	/// — which is what keeps the ordinary case one instruction with none of this in front of it. A type
-	/// that breaks reflexivity, and calls a value unequal to itself, is stored over anyway.
+	/// Trying the instruction first loses nothing. Identical bits are the same value, and
+	/// <see cref="Object.Equals(Object)"/> must be reflexive, so a bit match is always an equality match.
+	/// That keeps the common case to one instruction. A type that breaks reflexivity (calling a value
+	/// unequal to itself) is stored over anyway.
 	/// </para>
 	/// <para>
-	/// Kept out of line so the caller stays small enough to inline into the compare-exchange loops in
-	/// <see cref="AtomicExtensions"/>, which is where every read-modify-write goes.
+	/// This is <see cref="MethodImplOptions.NoInlining"/> so that <see cref="TryCompareExchange"/> stays
+	/// small, with the aim of letting it inline into the loops in <see cref="AtomicExtensions"/>. Neither
+	/// compiler currently inlines it there, and no test checks either way.
 	/// </para>
 	/// </remarks>
 	[MethodImpl(MethodImplOptions.NoInlining)]

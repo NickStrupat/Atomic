@@ -5,14 +5,13 @@ using NickStrupat;
 namespace Tests;
 
 /// <summary>
-/// The behaviour every storage strategy has to agree on, one thread at a time. Each implementation
-/// runs the whole suite through its own subclass, so a candidate cannot win on speed by being quietly
-/// wrong.
+/// The single-threaded behaviour every implementation must share. Each implementation runs the whole
+/// suite through its own subclass, so a candidate cannot win on speed by being quietly wrong.
 /// </summary>
 /// <remarks>
-/// What the same implementations owe several threads at once is <see cref="ThreadSafetyTests"/>. The
-/// split is worth keeping: a failure here is a plain bug and reproduces on the first run, where a
-/// failure there is a race and may not.
+/// Behaviour under several threads is tested separately, in <see cref="ThreadSafetyTests"/>. The split
+/// is worth keeping: a failure here is an ordinary bug that reproduces on the first run, while a failure
+/// there is a race and may not.
 /// </remarks>
 public abstract class AtomicContractTests
 {
@@ -339,9 +338,9 @@ public abstract class AtomicContractTests
 		cell.Read().Value.Should().Be(2);
 	}
 
-	/// <summary>The 8 bytes of a value, padding included.</summary>
-	/// <param name="value">The value to take the bits of.</param>
-	/// <returns>The bit pattern, which two equal values need not share.</returns>
+	/// <summary>Returns all 8 bytes of a value, padding included.</summary>
+	/// <param name="value">The value to read.</param>
+	/// <returns>The bit pattern, which can differ between two equal values.</returns>
 	private static Int64 WordOf(Padded value)
 	{
 		Int64 bits = 0;
@@ -349,14 +348,14 @@ public abstract class AtomicContractTests
 		return bits;
 	}
 
-	/// <summary>Builds a value whose fields are the ones asked for and whose padding is not zero.</summary>
+	/// <summary>Builds a value with the given fields and non-zero padding.</summary>
 	/// <param name="a">The value for <see cref="Padded.A"/>.</param>
 	/// <param name="b">The value for <see cref="Padded.B"/>.</param>
-	/// <returns>A value equal to one built the ordinary way, with a different bit pattern.</returns>
+	/// <returns>A value equal to one built normally, but with a different bit pattern.</returns>
 	/// <remarks>
-	/// Reading the struct out of an all-ones word fills the padding, and writing the two fields
-	/// afterwards leaves only the padding holding it. Kept out of line so the fields are stored to a
-	/// stack slot rather than kept in registers, which would drop the padding on the way back.
+	/// The struct is read out of an all-ones word, which fills everything with ones; setting the two
+	/// fields afterwards leaves ones only in the padding. The method is not inlined so that the value is
+	/// stored in a stack slot rather than registers, which would lose the padding on the way back.
 	/// </remarks>
 	[MethodImpl(MethodImplOptions.NoInlining)]
 	private static Padded PaddedWithGarbageInThePadding(Byte a, Int32 b)
@@ -370,9 +369,9 @@ public abstract class AtomicContractTests
 }
 
 /// <summary>
-/// The shipping cell, held to the same contract as the candidates through
-/// <see cref="AtomicAdapter{T}"/>. It does not implement <see cref="IAtomic{T}"/> itself, because that
-/// interface is a convenience for these tests rather than part of the package.
+/// Runs the contract suite against the shipping cell, through <see cref="AtomicAdapter{T}"/>. The cell
+/// does not implement <see cref="IAtomic{T}"/> itself, because that interface exists for these tests and
+/// is not part of the package.
 /// </summary>
 public sealed class AtomicTests : AtomicContractTests
 {
@@ -390,12 +389,12 @@ public sealed class SeqLockAtomicTests : AtomicContractTests
 }
 
 /// <summary>
-/// What a read-modify-write owes a type that calls a value unequal to itself.
+/// Checks that a retry loop terminates for a type that calls a value unequal to itself.
 /// </summary>
 /// <remarks>
-/// The comparison itself is in <see cref="AtomicContractTests"/>, where every implementation answers
-/// it. This is the part only the shipping cell can be asked, <see cref="AtomicExtensions"/> being
-/// declared against <see cref="Atomic{T}"/> rather than against <see cref="IAtomic{T}"/>.
+/// The comparison itself is tested in <see cref="AtomicContractTests"/>, against every implementation.
+/// These tests only apply to the shipping cell, because they depend on <see cref="Atomic{T}.IsLockFree"/>,
+/// which the other implementations do not share.
 /// </remarks>
 public sealed class AtomicReflexivityTests
 {

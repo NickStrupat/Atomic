@@ -5,15 +5,15 @@ using NickStrupat;
 namespace Tests;
 
 /// <summary>
-/// The read-modify-write extensions, which are declared against <see cref="Atomic{T}"/> rather than
-/// <see cref="IAtomic{T}"/> and so are not part of the shared contract suite.
+/// Tests for the read-modify-write extensions. They extend <see cref="Atomic{T}"/> rather than
+/// <see cref="IAtomic{T}"/>, so they are not part of the shared contract suite.
 /// </summary>
 /// <remarks>
-/// Declaring them on <see cref="Atomic{T}"/> rather than the interface drops a dispatch from every
-/// iteration of the loop, and lets them reach the storage directly for the four integers that have an
-/// instruction. The cost is that the candidates in <c>Candidates</c> no longer exercise these methods;
-/// what they still share — <see cref="IAtomic{T}.TryCompareExchange"/> driven in a loop by many
-/// threads — is covered by <see cref="AtomicContractTests"/> directly.
+/// Extending <see cref="Atomic{T}"/> directly removes an interface call from every iteration of the
+/// loop, and lets the extensions reach the storage directly for the four integer types that have an
+/// instruction. The cost is that the candidates in <c>Candidates</c> no longer run these methods. What
+/// they do share — <see cref="IAtomic{T}.TryCompareExchange"/> called in a loop from many threads — is
+/// covered by <see cref="AtomicContractTests"/>.
 /// </remarks>
 public class AtomicExtensionsTests
 {
@@ -161,14 +161,16 @@ public class AtomicExtensionsTests
 		(GC.GetAllocatedBytesForCurrentThread() - before).Should().Be(0);
 	}
 
-	/// <summary>Asserts that the word a narrow cell is kept in holds its value and zeros behind it.</summary>
-	/// <typeparam name="T">A type narrower than a word, so that the cell keeps it in one.</typeparam>
-	/// <param name="atomic">The cell to look inside.</param>
+	/// <summary>
+	/// Asserts that the word holding a narrow value contains that value followed by zeros.
+	/// </summary>
+	/// <typeparam name="T">A type narrower than a word, so the cell stores it in a word.</typeparam>
+	/// <param name="atomic">The cell to inspect.</param>
 	/// <remarks>
-	/// The slack is what <see cref="Atomic{T}.Read"/> discards, so it has to be read from the field
-	/// directly. Stray bits there are not a wrong answer but a broken promise: every compare-exchange
-	/// after them misses on the instruction and pays for the tail, and a type with no equality of its own
-	/// allocates to get there.
+	/// <see cref="Atomic{T}.Read"/> ignores the spare bytes, so they have to be read from the field
+	/// directly. Non-zero spare bytes do not produce wrong answers, but they break the cell's invariant:
+	/// every later compare-exchange misses on the instruction and has to fall back to the type's equality,
+	/// and a type with no equality of its own allocates to do so.
 	/// </remarks>
 	private static void ShouldHaveZeroSlack<T>(Atomic<T> atomic) where T : unmanaged
 	{

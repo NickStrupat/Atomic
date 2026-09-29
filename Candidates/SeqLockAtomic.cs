@@ -5,28 +5,41 @@ using System.Runtime.InteropServices;
 namespace NickStrupat;
 
 /// <summary>
-/// Holds the value in a single field of type <typeparamref name="T"/> beside a version counter, so a
-/// value too wide to swap atomically can still be read without taking a monitor and written without
-/// allocating.
+/// A candidate cell that stores the value in a field of type <typeparamref name="T"/> next to a version
+/// counter, so a value too wide to swap atomically can still be read without taking a lock and written
+/// without allocating.
 /// </summary>
 /// <typeparam name="T">The type of the value held by the cell.</typeparam>
 /// <remarks>
 /// <para>
-/// The fast paths match <see cref="Atomic{T}"/>, minus the widening it can afford, and leave the
-/// counter unused. A wider value holding no references uses the counter as a seqlock: a writer marks it odd, writes, then marks it
-/// even, while a reader takes a snapshot between two even readings of the same value and retries if
-/// they disagree. A reader can therefore copy a half-written value, which is harmless for bytes and
-/// unsurvivable for references — so a value type holding references falls back to a monitor instead.
+/// How the value is stored depends on <typeparamref name="T"/>:
+/// </para>
+/// <list type="bullet">
+/// <item><description>
+/// A value with no references whose size and alignment match an interlocked instruction, or a reference,
+/// is swapped in place as in <see cref="Atomic{T}"/>, and the counter goes unused. Unlike
+/// <see cref="Atomic{T}"/>, this class cannot widen an odd-sized value to a word, because it has a
+/// second field.
+/// </description></item>
+/// <item><description>
+/// A wider value with no references uses the counter as a seqlock. A writer makes the counter odd,
+/// writes, then makes it even again. A reader reads the counter, copies the value, and reads the counter
+/// again; if the counter was odd or changed, it retries.
+/// </description></item>
+/// <item><description>
+/// A value type containing references uses a lock. A seqlock reader can copy a half-written value and
+/// then throw it away, which is harmless for plain bytes but not for references.
+/// </description></item>
+/// </list>
+/// <para>
+/// The seqlock is still a lock. Readers do not exclude each other and do not queue behind a writer, but
+/// while a writer holds the counter odd every other thread waits. A read takes effect between its two
+/// readings of the counter, and a write at the moment it makes the counter odd, so operations are
+/// atomic — but neither reads nor writes are lock-free.
 /// </para>
 /// <para>
-/// The counter is a lock, not an absence of one. It spares readers from mutual exclusion with each other
-/// and from queueing behind a writer on a monitor, but a writer holds it for the duration of its write
-/// and every other thread waits. Reads linearize between the two readings of the counter and writes at
-/// the swap that makes it odd, so operations are atomic; neither side is lock free.
-/// </para>
-/// <para>
-/// The fast paths are duplicated from <see cref="Atomic{T}"/> rather than shared, so that each
-/// candidate is measured whole rather than through a call into common code.
+/// The in-place paths are copied from <see cref="Atomic{T}"/> rather than shared, so that each candidate
+/// is measured on its own and not through a call into common code.
 /// </para>
 /// </remarks>
 public sealed class SeqLockAtomic<T> : IAtomic<T>
@@ -39,39 +52,38 @@ public sealed class SeqLockAtomic<T> : IAtomic<T>
 	public SeqLockAtomic(T value) => storage = value;
 
 	/// <summary>
-	/// Gets a value indicating whether a read completes in a bounded number of steps no matter what other
-	/// threads are doing.
+	/// Gets a value indicating whether a read always finishes in a bounded number of steps, whatever
+	/// other threads are doing.
 	/// </summary>
 	/// <remarks>
-	/// True only where the read is a single load. The seqlock path is not wait free: it retries whenever a
-	/// write lands between the two readings of the counter, so a steady stream of writers can starve a
-	/// reader indefinitely. Nor is it lock free, since a writer descheduled with the counter odd blocks
-	/// every reader until it is scheduled again. It is obstruction free, which is a weaker promise than
-	/// this property makes.
+	/// True only when a read is a single load. A seqlock read is not wait-free: it retries whenever a
+	/// write lands between its two readings of the counter, so a steady stream of writers can starve it.
+	/// It is not lock-free either, because a writer descheduled with the counter odd blocks every reader
+	/// until it runs again. It is only obstruction-free, which is weaker than what this property promises.
 	/// </remarks>
 	public static Boolean ReadsAreWaitFree => IsInline || IsReference;
 
 	/// <summary>
-	/// Gets a value indicating whether a read stays off the monitor, whether by loading the value outright
-	/// or by taking a seqlock snapshot.
+	/// Gets a value indicating whether a read avoids the lock, either by loading the value directly or by
+	/// taking a seqlock snapshot.
 	/// </summary>
 	/// <remarks>
-	/// This is the property that separates the candidates: it is what lets readers of a wide value run
-	/// alongside a writer rather than queue behind it. It is not a claim about progress; see
+	/// This is what distinguishes this candidate from the others: readers of a wide value run alongside a
+	/// writer instead of queueing behind it. It says nothing about progress guarantees; see
 	/// <see cref="ReadsAreWaitFree"/> for that.
 	/// </remarks>
 	public static Boolean ReadsTakeNoMonitor => IsInline || IsReference || IsUnmanaged;
 
 	/// <summary>
-	/// Gets a value indicating whether the value can be read and written where it lies: it holds no
-	/// references, it matches an interlocked width, and the runtime is obliged to align it for one.
+	/// Gets a value indicating whether the value can be swapped in place: it holds no references, its size
+	/// is 1, 2, 4 or 8 bytes, and the runtime aligns it to that size.
 	/// </summary>
 	/// <remarks>
-	/// The alignment test is not pedantry. An 8-byte struct of two <see cref="Int32"/> fields has an
-	/// alignment of 4, so the runtime may seat it 4 bytes into the object, and a 64-bit
-	/// atomic instruction on that address raises <see cref="DataMisalignedException"/> on arm64. Copying
-	/// the bytes into a field which is itself 8 bytes wide, as <see cref="Atomic{T}"/> does, sidesteps
-	/// the question; reinterpreting the value where it lies does not.
+	/// The alignment check matters. A struct of two <see cref="Int32"/> fields is 8 bytes but only 4-byte
+	/// aligned, so the runtime may place it 4 bytes into the object, and an 8-byte atomic instruction on
+	/// that address raises <see cref="DataMisalignedException"/> on arm64. <see cref="Atomic{T}"/> avoids the
+	/// problem by relying on its only field being word-aligned; this class has two fields, so it can only
+	/// use the value's own alignment.
 	/// </remarks>
 	private static Boolean IsInline
 	{
@@ -81,7 +93,7 @@ public sealed class SeqLockAtomic<T> : IAtomic<T>
 			&& AlignmentOfT >= Unsafe.SizeOf<T>();
 	}
 
-	/// <summary>Gets the alignment the runtime gives a field of type <typeparamref name="T"/>.</summary>
+	/// <summary>Gets the alignment, in bytes, of a field of type <typeparamref name="T"/>.</summary>
 	private static Int32 AlignmentOfT
 	{
 		[MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -89,8 +101,8 @@ public sealed class SeqLockAtomic<T> : IAtomic<T>
 	}
 
 	/// <summary>
-	/// A byte followed by the value. How far the value gets pushed along to satisfy its own alignment is
-	/// the difference between this and the size of the value alone.
+	/// A byte followed by the value, used to measure the value's alignment: the runtime pads after the byte
+	/// to align the value, so this struct's size minus the value's size is that alignment.
 	/// </summary>
 	[StructLayout(LayoutKind.Sequential)]
 	private struct AlignmentProbe
@@ -242,14 +254,17 @@ public sealed class SeqLockAtomic<T> : IAtomic<T>
 		}
 	}
 
-	/// <summary>Exchanges the value at the width of <typeparamref name="T"/>, comparing its bits.</summary>
-	/// <param name="value">The value to store when the bits match.</param>
+	/// <summary>
+	/// Compare-exchanges the value with one instruction of the width of <typeparamref name="T"/>,
+	/// comparing bits.
+	/// </summary>
+	/// <param name="value">The value to store if the bits match.</param>
 	/// <param name="comparand">The value whose bits the cell is expected to hold.</param>
 	/// <param name="previous">The value held before the call.</param>
-	/// <returns><see langword="true"/> when the bits matched and the value was stored.</returns>
+	/// <returns><see langword="true"/> if the bits matched and the value was stored.</returns>
 	/// <remarks>
-	/// One instruction, and the only comparison the hardware offers. Called first because identical bits
-	/// are the same value, and then again per retry with the bits a previous attempt actually saw.
+	/// Bit comparison is the only kind the hardware offers. This is tried first because identical bits are
+	/// the same value, and then once per retry with the bits the previous attempt actually found.
 	/// </remarks>
 	private Boolean ExchangeBits(T value, T comparand, out T previous)
 	{
@@ -263,14 +278,14 @@ public sealed class SeqLockAtomic<T> : IAtomic<T>
 		}
 	}
 
-	/// <summary>Compares two values by their bytes, which runs no user code.</summary>
+	/// <summary>Compares two values byte by byte, without running any user code.</summary>
 	/// <param name="a">The first value.</param>
 	/// <param name="b">The second value.</param>
 	/// <returns><see langword="true"/> if the two are identical byte for byte.</returns>
 	/// <remarks>
-	/// Sound only for a <typeparamref name="T"/> holding no references, which is the only place it is
-	/// called. Padding makes it conservative rather than wrong: values it separates may still compare equal,
-	/// which costs a retry, while values it joins are identical and so equal under any comparer.
+	/// Only valid for a <typeparamref name="T"/> with no references, which is the only case that calls it.
+	/// Padding can make it say "different" for values the type considers equal, which costs a retry. It
+	/// never says "same" wrongly: identical bytes are equal under any comparer.
 	/// </remarks>
 	private static Boolean BitsEqual(ref T a, ref T b) =>
 		MemoryMarshal.CreateReadOnlySpan(ref Unsafe.As<T, Byte>(ref a), Unsafe.SizeOf<T>())
@@ -303,8 +318,8 @@ public sealed class SeqLockAtomic<T> : IAtomic<T>
 		ReleaseWrite(stamp);
 	}
 
-	/// <summary>Marks the counter odd, which tells readers a write is under way.</summary>
-	/// <returns>The even value the counter is restored past on release.</returns>
+	/// <summary>Makes the counter odd, telling readers a write is in progress.</summary>
+	/// <returns>The even value the counter had before; pass it to <see cref="ReleaseWrite"/>.</returns>
 	private Int64 AcquireWrite()
 	{
 		while (true)
@@ -316,14 +331,15 @@ public sealed class SeqLockAtomic<T> : IAtomic<T>
 		}
 	}
 
-	/// <summary>Marks the counter even again, at a value no reader can mistake for the one before.</summary>
+	/// <summary>
+	/// Makes the counter even again, at a new value no reader can mistake for the one before the write.
+	/// </summary>
 	/// <param name="stamp">The value returned by <see cref="AcquireWrite"/>.</param>
 	/// <remarks>
-	/// The counter is 64 bits wide so that it cannot come back around to a value a reader is still
-	/// holding. At 32 bits a reader descheduled across 2 billion writes would see the counter it
-	/// started with and accept a torn snapshot; at 64 the wrap is unreachable. The width costs
-	/// nothing for the values this path serves, since a counter beside a value of a word or more lands in
-	/// padding either way.
+	/// The counter is 64 bits so that it can never wrap around to a value a reader is still holding. With
+	/// 32 bits, a reader descheduled across 2 billion writes could see its starting value again and accept
+	/// a torn snapshot; with 64 bits that is unreachable. The extra width costs nothing here: next to a
+	/// value of a word or more, the counter occupies space that would be padding anyway.
 	/// </remarks>
 	private void ReleaseWrite(Int64 stamp) => Volatile.Write(ref version, stamp + 2);
 

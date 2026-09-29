@@ -1,24 +1,24 @@
 namespace Benchmarks;
 
 /// <summary>
-/// Three bytes, which no interlocked instruction is that wide. Standing in for every size a cell has to
-/// widen before it can swap it: three, five, six and seven behave alike.
+/// 3 bytes, a width no interlocked instruction has. It stands for every size a cell must widen before
+/// it can swap it: 3, 5, 6 and 7 bytes all behave alike.
 /// </summary>
 public readonly record struct Three(Byte A, Byte B, Byte C);
 
 /// <summary>
-/// A struct holding a reference. Narrow enough to fit in a word, and stored out of line anyway: the
-/// garbage collector has to see the reference move, which no widened swap lets it do.
+/// A struct holding a reference. It fits in a word but still cannot be swapped in place: the reference
+/// must be written through the GC write barrier, which a widened word swap would bypass.
 /// </summary>
 public readonly record struct Tagged(Int32 Number, String Text);
 
 /// <summary>
-/// The value each benchmarked cell is built around, one per category.
+/// The sample value each benchmarked cell holds, one per category.
 /// </summary>
 /// <remarks>
-/// A benchmark generic over <c>T</c> cannot write down a literal, and a default value would not do: a
-/// null reference is not what a reference cell costs, because the write barrier a real reference goes
-/// through is elided for a store the compiler can see is null.
+/// A benchmark generic over <c>T</c> cannot write a literal, and <c>default</c> would not do: storing
+/// null skips the GC write barrier that storing a real reference goes through, so it would understate
+/// what a reference cell costs.
 /// </remarks>
 internal static class Samples
 {
@@ -31,7 +31,7 @@ internal static class Samples
 		[typeof(Tagged)] = new Tagged(1, new String(['x'])),
 	};
 
-	/// <summary>The sample value for <typeparamref name="T"/>.</summary>
+	/// <summary>Gets the sample value for <typeparamref name="T"/>.</summary>
 	/// <typeparam name="T">The type of the value held by the cell.</typeparam>
 	/// <returns>A value of <typeparamref name="T"/>, the same one on every call.</returns>
 	/// <exception cref="NotSupportedException"><typeparamref name="T"/> is not a benchmarked category.</exception>
@@ -39,9 +39,9 @@ internal static class Samples
 		? (T)value
 		: throw new NotSupportedException($"No sample value for {typeof(T)}. Add one to {nameof(Samples)}.");
 
-	/// <summary>What a category is, in words, for the contention table.</summary>
+	/// <summary>Describes a category in words, for the contention table.</summary>
 	/// <typeparam name="T">The type of the value held by the cell.</typeparam>
-	/// <returns>A description of why <typeparamref name="T"/> is measured separately.</returns>
+	/// <returns>A short description of what makes <typeparamref name="T"/> a separate category.</returns>
 	public static String Describe<T>() => typeof(T) switch
 	{
 		var t when t == typeof(Int64) => "unmanaged, one word",

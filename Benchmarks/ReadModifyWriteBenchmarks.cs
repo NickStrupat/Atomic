@@ -4,17 +4,15 @@ using NickStrupat;
 namespace Benchmarks;
 
 /// <summary>
-/// What the extension methods cost against the instruction they stand in for. <c>Interlocked</c> acts
-/// on a reference to the storage and never retries; the extensions reach the storage only through a
-/// compare-and-exchange loop, so they read, compute, and exchange.
+/// Measures the read-modify-write extensions against a bare <c>Interlocked</c> call: the specialised
+/// instruction, a hand-written compare-exchange loop, and the lock path for a wide value.
 /// </summary>
 /// <remarks>
-/// Only <see cref="Atomic{T}"/> is measured here. Every read-modify-write the candidates offer is the
-/// same loop over the compare-and-exchange <see cref="CellBenchmarks{T}"/> already measures for each
-/// category, so a row for them would add nothing — and the rows that used to be here added something
-/// worse than nothing. They reached the candidates through <see cref="IAtomic{T}"/> while the
-/// <see cref="Atomic{T}"/> rows called a concrete type directly, which measures a dispatch the
-/// candidates do not have and would not have shipped with.
+/// Only <see cref="Atomic{T}"/> is measured here. A read-modify-write on any candidate is the same loop
+/// over the compare-exchange that <see cref="CellBenchmarks{T}"/> already measures for each category, so
+/// rows for them would add nothing. The rows that used to be here were worse than nothing: they called
+/// the candidates through <see cref="IAtomic{T}"/> but <see cref="Atomic{T}"/> directly, so they measured
+/// an interface dispatch the candidates would never have shipped with.
 /// </remarks>
 [MemoryDiagnoser, ShortRunJob]
 public class ReadModifyWriteBenchmarks
@@ -34,13 +32,12 @@ public class ReadModifyWriteBenchmarks
 	[Benchmark(OperationsPerInvoke = Operations)]
 	public void Atomic_Increment_Loop() { for (var i = 0; i < Operations; i++) IncrementByLoop(atomic); }
 
-	/// <summary>Increments by compare-and-exchange, which the library no longer does for this type.</summary>
+	/// <summary>Increments with a compare-exchange loop, which the library no longer uses for this type.</summary>
 	/// <param name="atomic">The cell to increment.</param>
 	/// <returns>The new value.</returns>
 	/// <remarks>
-	/// Written out here because naming <c>AtomicExtensions</c> no longer reaches a loop: it specialises
-	/// to the same instruction the row above measures, and the two rows would have been one benchmark
-	/// run twice.
+	/// Written out here because <c>AtomicExtensions.Increment</c> now compiles to the instruction for this
+	/// type, so calling it would just measure the instruction row a second time.
 	/// </remarks>
 	private static Int64 IncrementByLoop(Atomic<Int64> atomic)
 	{

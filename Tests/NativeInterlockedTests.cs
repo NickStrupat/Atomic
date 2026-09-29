@@ -5,8 +5,10 @@ using NickStrupat;
 namespace Tests;
 
 /// <summary>
-/// The extensions which hand a narrowed view of the cell's word to <see cref="Interlocked"/>, and the
-/// invariant they must not break: the bytes past the value stay zero, or every later comparison fails.
+/// Tests for the extensions that apply an <see cref="Interlocked"/> instruction directly to the cell's
+/// storage. Besides return values, contention and allocation, they check the invariant those
+/// instructions must keep: the bytes after the value stay zero, even when the value wraps or overflows.
+/// Non-zero bytes there would make every later compare-exchange miss on the instruction.
 /// </summary>
 public class NativeInterlockedTests
 {
@@ -217,11 +219,11 @@ public class NativeInterlockedTests
 		atomic.Read().Should().Be(7);
 	}
 
-	/// <summary>Applies <paramref name="update"/> with a compare-and-exchange loop written out by hand.</summary>
+	/// <summary>Applies <paramref name="update"/> using a hand-written compare-exchange loop.</summary>
 	/// <param name="atomic">The cell to update.</param>
 	/// <param name="update">Produces the new value from the current one.</param>
-	/// <param name="returnsOld">Whether to return the value replaced rather than the one stored.</param>
-	/// <returns>The new value, or the old one when <paramref name="returnsOld"/> is set.</returns>
+	/// <param name="returnsOld">Whether to return the replaced value rather than the stored one.</param>
+	/// <returns>The new value, or the old one if <paramref name="returnsOld"/> is set.</returns>
 	private static Int32 Loop(Atomic<Int32> atomic, Func<Int32, Int32> update, Boolean returnsOld = false)
 	{
 		var current = atomic.Read();
@@ -235,8 +237,8 @@ public class NativeInterlockedTests
 	}
 
 	/// <summary>
-	/// Calls the extensions from code where <c>T</c> is still a type parameter, which is the only place
-	/// the specialisation is what decides anything.
+	/// Calls the extensions from generic code, where <c>T</c> is still a type parameter. That is the case
+	/// the in-method specialisation exists for.
 	/// </summary>
 	private static class Generic
 	{

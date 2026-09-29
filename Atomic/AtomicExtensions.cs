@@ -86,7 +86,7 @@ public static class AtomicExtensions
 		}
 	}
 
-	/// <summary>Subtracts <paramref name="subtrahend"/> from the value.</summary>
+	/// <summary>Atomically subtracts <paramref name="subtrahend"/> from the value.</summary>
 	/// <typeparam name="T">The type of the value held by the cell.</typeparam>
 	/// <param name="atomic">The cell to subtract from.</param>
 	/// <param name="subtrahend">The value to subtract.</param>
@@ -135,7 +135,7 @@ public static class AtomicExtensions
 		}
 	}
 
-	/// <summary>Increments the value.</summary>
+	/// <summary>Atomically adds one to the value.</summary>
 	/// <typeparam name="T">The type of the value held by the cell.</typeparam>
 	/// <param name="atomic">The cell to increment.</param>
 	/// <returns>The new value, as <see cref="Interlocked.Increment(ref Int32)"/> does.</returns>
@@ -168,7 +168,7 @@ public static class AtomicExtensions
 		}
 	}
 
-	/// <summary>Decrements the value.</summary>
+	/// <summary>Atomically subtracts one from the value.</summary>
 	/// <typeparam name="T">The type of the value held by the cell.</typeparam>
 	/// <param name="atomic">The cell to decrement.</param>
 	/// <returns>The new value, as <see cref="Interlocked.Decrement(ref Int32)"/> does.</returns>
@@ -201,10 +201,10 @@ public static class AtomicExtensions
 		}
 	}
 
-	/// <summary>Replaces the value with its bitwise and against <paramref name="value"/>.</summary>
+	/// <summary>Atomically clears every bit not set in <paramref name="value"/> (a bitwise AND).</summary>
 	/// <typeparam name="T">The type of the value held by the cell.</typeparam>
-	/// <param name="atomic">The cell to mask.</param>
-	/// <param name="value">The mask.</param>
+	/// <param name="atomic">The cell to clear bits in.</param>
+	/// <param name="value">The bits to keep.</param>
 	/// <returns>The old value, as <see cref="Interlocked.And(ref Int32, Int32)"/> does.</returns>
 	/// <exception cref="ArgumentNullException"><paramref name="atomic"/> is null.</exception>
 	public static T And<T>(this Atomic<T> atomic, T value)
@@ -233,7 +233,7 @@ public static class AtomicExtensions
 		}
 	}
 
-	/// <summary>Replaces the value with its bitwise or against <paramref name="value"/>.</summary>
+	/// <summary>Atomically sets every bit that is set in <paramref name="value"/> (a bitwise OR).</summary>
 	/// <typeparam name="T">The type of the value held by the cell.</typeparam>
 	/// <param name="atomic">The cell to set bits in.</param>
 	/// <param name="value">The bits to set.</param>
@@ -265,11 +265,11 @@ public static class AtomicExtensions
 		}
 	}
 
-	/// <summary>Replaces the value with its bitwise exclusive or against <paramref name="value"/>.</summary>
+	/// <summary>Atomically flips every bit that is set in <paramref name="value"/> (a bitwise XOR).</summary>
 	/// <typeparam name="T">The type of the value held by the cell.</typeparam>
 	/// <param name="atomic">The cell to flip bits in.</param>
 	/// <param name="value">The bits to flip.</param>
-	/// <returns>The old value, matching <see cref="And"/> and <see cref="Or"/>.</returns>
+	/// <returns>The old value, like <see cref="And"/> and <see cref="Or"/>.</returns>
 	/// <exception cref="ArgumentNullException"><paramref name="atomic"/> is null.</exception>
 	public static T Xor<T>(this Atomic<T> atomic, T value)
 	where T : IBitwiseOperators<T, T, T>
@@ -285,11 +285,11 @@ public static class AtomicExtensions
 		}
 	}
 
-	/// <summary>Raises the value to <paramref name="value"/> if it is below it.</summary>
+	/// <summary>Atomically sets the value to <paramref name="value"/> if the current value is lower.</summary>
 	/// <typeparam name="T">The type of the value held by the cell.</typeparam>
 	/// <param name="atomic">The cell to raise.</param>
-	/// <param name="value">The floor to raise the value to.</param>
-	/// <returns>The value held afterwards, whether or not this call is what put it there.</returns>
+	/// <param name="value">The lowest value the cell should hold afterwards.</param>
+	/// <returns>The value held afterwards, whether or not this call changed it.</returns>
 	/// <exception cref="ArgumentNullException"><paramref name="atomic"/> is null.</exception>
 	public static T Max<T>(this Atomic<T> atomic, T value)
 	where T : IComparisonOperators<T, T, Boolean>
@@ -307,11 +307,11 @@ public static class AtomicExtensions
 		}
 	}
 
-	/// <summary>Lowers the value to <paramref name="value"/> if it is above it.</summary>
+	/// <summary>Atomically sets the value to <paramref name="value"/> if the current value is higher.</summary>
 	/// <typeparam name="T">The type of the value held by the cell.</typeparam>
 	/// <param name="atomic">The cell to lower.</param>
-	/// <param name="value">The ceiling to lower the value to.</param>
-	/// <returns>The value held afterwards, whether or not this call is what put it there.</returns>
+	/// <param name="value">The highest value the cell should hold afterwards.</param>
+	/// <returns>The value held afterwards, whether or not this call changed it.</returns>
 	/// <exception cref="ArgumentNullException"><paramref name="atomic"/> is null.</exception>
 	public static T Min<T>(this Atomic<T> atomic, T value)
 	where T : IComparisonOperators<T, T, Boolean>
