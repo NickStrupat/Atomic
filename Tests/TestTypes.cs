@@ -244,28 +244,121 @@ public readonly struct WideUnreflexive(Double value)
 }
 
 /// <summary>
-/// A plain struct with no <see cref="Equals(Object)"/> override and no <see cref="IEquatable{T}"/>, so
-/// <see cref="EqualityComparer{T}.Default"/> falls back to <c>ObjectEqualityComparer&lt;T&gt;</c>, which
-/// boxes both sides to reach <see cref="ValueType.Equals(Object)"/>.
+/// A plain struct with no <see cref="Equals(Object)"/> override and no <see cref="IEquatable{T}"/>.
 /// </summary>
+/// <remarks>
+/// For such a type <see cref="EqualityComparer{T}.Default"/> is <c>ObjectEqualityComparer&lt;T&gt;</c>,
+/// which boxes both values to call <see cref="ValueType.Equals(Object)"/>.
+/// </remarks>
 public struct NoEquatable
 {
-	/// <summary>The only field, and the reason two values compare unequal.</summary>
+	/// <summary>The only field; two values are equal when it is.</summary>
 	public Int32 Value;
 }
 
 /// <summary>
-/// <see cref="NoEquatable"/> past the word, for the same reason <see cref="WideTolerance"/> exists
-/// beside <see cref="Tolerance"/>: the boxing this pair exists to catch happens at either width.
+/// A version of <see cref="NoEquatable"/> wider than a word, so the boxing it shows can be checked on
+/// the lock strategy as well.
 /// </summary>
 public struct WideNoEquatable
 {
-	/// <summary>The first word. <see cref="ValueType.Equals(Object)"/> compares all three.</summary>
+	/// <summary>The first field. <see cref="ValueType.Equals(Object)"/> compares all three.</summary>
 	public Int64 A;
 
-	/// <summary>The second word, compared like the first: nothing here is ignored by equality.</summary>
+	/// <summary>The second field, also compared.</summary>
 	public Int64 B;
 
-	/// <summary>The third word, which pushes the type past the word and onto the monitor.</summary>
+	/// <summary>The third field, which makes the type wider than a word and moves it to the lock.</summary>
 	public Int64 C;
+}
+
+/// <summary>
+/// A type wider than a word (so <see cref="Atomic{T}"/> guards it with its lock) that implements every
+/// operator the read-modify-write operations need, and records whether each operator ran while the
+/// current thread held the lock on a watched cell.
+/// </summary>
+/// <remarks>
+/// A test uses this to tell "the operator ran under the lock" from "the operator ran in a
+/// compare-exchange loop between two lock acquisitions". Both give the same result on one thread, so
+/// the result alone cannot tell them apart. The counts are per thread, so tests running in parallel do
+/// not see each other's.
+/// </remarks>
+/// <param name="Value">The field every operator acts on.</param>
+/// <param name="Padding">A field that only exists to make the type wider than a word.</param>
+public readonly record struct Witnessed(Int64 Value, Int64 Padding)
+	: IAdditionOperators<Witnessed, Witnessed, Witnessed>,
+	ISubtractionOperators<Witnessed, Witnessed, Witnessed>,
+	IIncrementOperators<Witnessed>,
+	IDecrementOperators<Witnessed>,
+	IBitwiseOperators<Witnessed, Witnessed, Witnessed>,
+	IComparisonOperators<Witnessed, Witnessed, Boolean>
+{
+	[ThreadStatic] private static Object? watched;
+	[ThreadStatic] private static Int32 calls;
+	[ThreadStatic] private static Int32 callsOutsideTheLock;
+
+	/// <summary>How many operators have run on this thread since <see cref="Watch"/> was called.</summary>
+	public static Int32 Calls => calls;
+
+	/// <summary>How many of those ran while this thread did not hold the watched cell's lock.</summary>
+	public static Int32 CallsOutsideTheLock => callsOutsideTheLock;
+
+	/// <summary>Resets the counts and starts recording on this thread against <paramref name="cell"/>.</summary>
+	/// <param name="cell">The cell whose lock the operators are expected to run under.</param>
+	public static void Watch(Atomic<Witnessed> cell)
+	{
+		watched = cell;
+		calls = 0;
+		callsOutsideTheLock = 0;
+	}
+
+	private static Witnessed Observe(Witnessed result)
+	{
+		calls++;
+		if (watched is null || !Monitor.IsEntered(watched))
+			callsOutsideTheLock++;
+		return result;
+	}
+
+	private static Boolean Observe(Boolean result)
+	{
+		Observe(default(Witnessed));
+		return result;
+	}
+
+	/// <inheritdoc />
+	public static Witnessed operator +(Witnessed left, Witnessed right) => Observe(new Witnessed(left.Value + right.Value, 0));
+
+	/// <inheritdoc />
+	public static Witnessed operator -(Witnessed left, Witnessed right) => Observe(new Witnessed(left.Value - right.Value, 0));
+
+	/// <inheritdoc />
+	public static Witnessed operator ++(Witnessed value) => Observe(new Witnessed(value.Value + 1, 0));
+
+	/// <inheritdoc />
+	public static Witnessed operator --(Witnessed value) => Observe(new Witnessed(value.Value - 1, 0));
+
+	/// <inheritdoc />
+	public static Witnessed operator &(Witnessed left, Witnessed right) => Observe(new Witnessed(left.Value & right.Value, 0));
+
+	/// <inheritdoc />
+	public static Witnessed operator |(Witnessed left, Witnessed right) => Observe(new Witnessed(left.Value | right.Value, 0));
+
+	/// <inheritdoc />
+	public static Witnessed operator ^(Witnessed left, Witnessed right) => Observe(new Witnessed(left.Value ^ right.Value, 0));
+
+	/// <inheritdoc />
+	public static Witnessed operator ~(Witnessed value) => Observe(new Witnessed(~value.Value, 0));
+
+	/// <inheritdoc />
+	public static Boolean operator <(Witnessed left, Witnessed right) => Observe(left.Value < right.Value);
+
+	/// <inheritdoc />
+	public static Boolean operator >(Witnessed left, Witnessed right) => Observe(left.Value > right.Value);
+
+	/// <inheritdoc />
+	public static Boolean operator <=(Witnessed left, Witnessed right) => Observe(left.Value <= right.Value);
+
+	/// <inheritdoc />
+	public static Boolean operator >=(Witnessed left, Witnessed right) => Observe(left.Value >= right.Value);
 }

@@ -105,10 +105,17 @@ public class CodegenTests
 		word.Should().NotContain("Monitor");
 		word.Should().NotContainAny("CHKCAST", "ISINSTANCE", "UNBOX", "NEWSFAST");
 
-		// A type with no instruction takes the loop through the same source, so this is what the
-		// assertions above are distinguishing themselves from.
+		// A word with no instruction takes the loop through the same source, so this is what the
+		// assertions above are distinguishing themselves from. It carries no lock either: the branch that
+		// takes one is for the monitor strategy alone and folds away everywhere else.
+		var loop = Body(methods, "AtomicExtensions:Increment[double]");
+		loop.Should().NotContain("ldaddal");
+		loop.Should().NotContain("Monitor", "a cell that swaps in place never reaches the lock branch");
+
+		// A value behind the monitor takes neither: it computes under the lock the cell already holds.
 		var wide = Body(methods, "AtomicExtensions:Increment[System.Decimal]");
 		wide.Should().NotContain("ldaddal");
+		wide.Should().NotContain("casal");
 		wide.Should().Contain("Monitor");
 
 		// A compare-exchange on a word is the instruction with nothing in front of it. The cell compares

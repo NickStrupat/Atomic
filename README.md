@@ -66,7 +66,8 @@ store buffer. Still cheaper than the 13 ns a lock would cost, which is the compa
 
 ## Read-modify-write
 
-Generic, over any `T` with the matching operator, via a compare-and-swap loop:
+Generic, over any `T` with the matching operator — via a compare-and-swap loop where the cell is
+lock-free, and in one acquisition of its lock where it is not:
 
 ```csharp
 Add  Subtract  Increment  Decrement  And  Or  Xor  Max  Min
@@ -119,6 +120,26 @@ the same, by compare-and-exchange loop   10.0
 ```
 
 Every failed comparison costs another cache line migration, which is what the bottom row is.
+
+Where the cell keeps its value behind its monitor, a loop would take the lock twice — once to read, once
+to exchange — and run the operator in between with nothing held, where any other writer can land and
+send it round again. So there the read-modify-writes take the lock once and compute on the value in
+place. Uncontended that is one monitor rather than two, `Atomic<Decimal>.Increment` going from 26.58 ns
+to 13.28, the same as a `Read`; contended, a writer arriving mid-operation waits instead of costing a
+retry:
+
+```
+Atomic<Decimal>.Increment, Mops/s   1 thread   2 threads   4 threads   8 threads
+compare-and-swap loop                  33–38       15–22       11–21        9–12
+one acquisition of the lock            64–75       51–52       40–42       34–42
+```
+
+Ranges over six one-second runs each, the two builds alternated on the same machine, with
+`Int64.Increment` beside them as the control that did not move.
+
+The price is that the type's operator runs under the lock, as its `Equals` already does inside a
+compare-exchange there. An operator that takes some other lock can deadlock against code that takes
+the two in the opposite order; nothing in the BCL's numeric types does.
 
 ## What "atomic" guarantees here
 

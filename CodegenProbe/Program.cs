@@ -15,6 +15,7 @@ file static class Probe
 	{
 		var word = new Atomic<Int64>(1);
 		var wide = new Atomic<Decimal>(1m);
+		var looped = new Atomic<Double>(1.0);
 		var reference = new Atomic<String>("x");
 
 		// The disassembler is asked for optimised code with tiering off, so one round would do.
@@ -28,6 +29,7 @@ file static class Probe
 			ProbeWriteWord(word, i);
 			sink += ProbeIncrementWord(word);
 			sink += (Int64)ProbeIncrementWide(wide);
+			sink += (Int64)ProbeIncrementLooped(looped);
 			sink += ProbeCompareExchangeWord(word, i) ? 1 : 0;
 			sink += ProbeCompareExchangeWide(wide, i) ? 1 : 0;
 		}
@@ -52,6 +54,9 @@ file static class Probe
 
 	[MethodImpl(MethodImplOptions.NoInlining)]
 	public static Decimal ProbeIncrementWide(Atomic<Decimal> cell) => cell.Increment();
+
+	[MethodImpl(MethodImplOptions.NoInlining)]
+	public static Double ProbeIncrementLooped(Atomic<Double> cell) => cell.Increment();
 
 	[MethodImpl(MethodImplOptions.NoInlining)]
 	public static Boolean ProbeCompareExchangeWord(Atomic<Int64> cell, Int64 value) =>

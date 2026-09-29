@@ -412,14 +412,29 @@ public sealed class AtomicReflexivityTests
 		// The visible symptom of the disagreement above. A loop retries on the value it was handed back,
 		// which is the value it just offered, so a cell that refuses its own value refuses every attempt
 		// and the loop never ends. That does not fail, it hangs, so the assertion has to be a deadline.
+		//
+		// The loop is the caller's own rather than Add, because on this strategy Add no longer loops: it
+		// computes under the lock and never asks the cell to compare, so pointed at Add this would pass
+		// against a cell that asked the type first. Anyone writing their own retry still reaches the
+		// comparison, and that is who this is for.
 		var cell = new Atomic<WideUnreflexive>(new WideUnreflexive(Double.NaN));
 
-		var attempt = Task.Run(() => cell.Add(new WideUnreflexive(1)), TestContext.Current.CancellationToken);
+		var attempt = Task.Run(() => AddByLoop(cell, new WideUnreflexive(1)), TestContext.Current.CancellationToken);
 		var finished = await Task.WhenAny(
 			attempt,
 			Task.Delay(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
 
 		finished.Should().BeSameAs(attempt, "a read-modify-write must not spin forever on a value the cell holds");
 		await attempt;
+	}
+
+	/// <summary>Adds using a compare-exchange loop, as a caller writing their own retry would.</summary>
+	/// <param name="cell">The cell to add to.</param>
+	/// <param name="addend">The value to add.</param>
+	private static void AddByLoop(Atomic<WideUnreflexive> cell, WideUnreflexive addend)
+	{
+		var current = cell.Read();
+		while (!cell.TryCompareExchange(current + addend, current, out var previous))
+			current = previous;
 	}
 }

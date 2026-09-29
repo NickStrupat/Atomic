@@ -3,57 +3,74 @@ using System.Numerics;
 namespace NickStrupat;
 
 /// <summary>
-/// Read-modify-write operations for the values that support them.
+/// Atomic read-modify-write operations — add, subtract, increment, decrement, and, or, xor, max and
+/// min — for cells whose type supports the matching operator.
 /// </summary>
 /// <remarks>
 /// <para>
-/// Most of these are a compare-and-exchange loop, because nothing here knows the shape of the value
-/// well enough to hand a reference to <c>Interlocked.Add</c>. Uncontended that costs nothing
-/// measurable, because the first comparison succeeds; contended it costs a retry for every writer that
-/// lands first, where a native instruction would not have to retry at all.
+/// Each operation picks one of three implementations. The choice depends only on the type, so the
+/// compiler folds it away and each instantiation contains exactly one of them:
+/// </para>
+/// <list type="number">
+/// <item><description>
+/// A single <see cref="Interlocked"/> instruction. Used by <see cref="Add"/>, <see cref="Subtract"/>,
+/// <see cref="Increment"/>, <see cref="Decrement"/>, <see cref="And"/> and <see cref="Or"/> when
+/// <c>T</c> is <see cref="Int32"/>, <see cref="Int64"/>, <see cref="UInt32"/> or
+/// <see cref="UInt64"/> and the cell swaps its value in place. This holds at 32 bits as well: the
+/// 4-byte types go through the word and the 8-byte types through the same locked 8-byte instructions
+/// the cell itself uses.
+/// </description></item>
+/// <item><description>
+/// A lock on the cell, when the cell keeps its value behind its lock (<c>!Atomic&lt;T&gt;.IsLockFree</c>).
+/// The operator runs once, directly on the stored value, while the lock is held.
+/// </description></item>
+/// <item><description>
+/// A compare-exchange loop for everything else. Uncontended it costs nothing measurable, because the
+/// first attempt succeeds. Under contention every writer that gets in first forces a retry, which an
+/// instruction would not.
+/// </description></item>
+/// </list>
+/// <para>
+/// The instruction is only used when the cell's strategy allows it, not just when the type matches.
+/// Each of the six checks <c>Atomic&lt;T&gt;.IsInline</c> first. Without that check, an
+/// <c>Interlocked.Increment</c> on a field the cell guards with its lock would be a second writer the lock
+/// knows nothing about, and a concurrent <see cref="Atomic{T}.CompareExchange"/> could read, compare and
+/// store across the increment and lose it. The check is a constant, so it costs nothing, and because it
+/// asks the cell rather than restating a word size, it stays correct if the strategy changes.
 /// </para>
 /// <para>
-/// Where an instruction does exist, these use it. <see cref="Add"/>, <see cref="Subtract"/>,
-/// <see cref="Increment"/>, <see cref="Decrement"/>, <see cref="And"/> and <see cref="Or"/> test
-/// <c>typeof(T)</c> against the four integers <see cref="Interlocked"/> covers, and the JIT folds that
-/// test when it specialises the method — so an instantiation with an instruction is the instruction and
-/// nothing else, and one without is the loop and nothing else. Neither carries the test.
+/// The lock path exists because a loop is the wrong tool there. Each attempt would take the lock twice —
+/// once to read, once to compare-exchange — and run the operator in between with nothing held, so any
+/// writer landing in that gap forces another round. Holding the lock throughout means the operator runs
+/// once, nothing is compared, and other writers wait instead of causing retries. The check folds like
+/// the others, so lock-free instantiations carry no <c>try</c>/<c>finally</c>. The trade-off is that the
+/// type's operator runs under the lock, just as its <c>Equals</c> already does inside compare-exchange: an
+/// operator that takes another lock can deadlock with code taking the two in the opposite order.
 /// </para>
 /// <para>
-/// Naming one of those four types is not enough on its own, because an instruction and a monitor do not
-/// exclude each other. An unguarded <c>Interlocked.Increment</c> against a field the cell is keeping
-/// behind its monitor would be a second writer the monitor knows nothing about — long enough for a
-/// <see cref="Atomic{T}.CompareExchange"/> to read, compare and store across an increment and drop it.
-/// So the six ask <c>Atomic&lt;T&gt;.IsInline</c> first, which folds with everything else and costs
-/// nothing; where it is false the loop below handles the type correctly, because the loop goes through
-/// the cell. Naming the cell's strategy rather than restating a word size is what keeps that gate right
-/// when the strategy changes: all four types keep their instruction at 32 bits too, the smaller
-/// pair through the word and the larger through the same locked 8-byte instructions the cell uses.
+/// To reach the instruction, the code needs a <c>ref Int32</c> (say) to the storage. Inside the
+/// <c>typeof(T) == typeof(Int32)</c> test the cell already is an <c>Atomic&lt;Int32&gt;</c>; the compiler
+/// just does not know it. Casting the cell through <see cref="Object"/> tells it, and <c>Storage</c> on the
+/// result is then an ordinary <c>ref Int32</c>. Values are cast through <see cref="Object"/> the same way.
+/// All of these casts disappear along with the test: the reference cast compiles to nothing, and the
+/// boxing and unboxing of values is removed before any code is emitted, so nothing here allocates.
 /// </para>
 /// <para>
-/// Getting at the instruction means getting a reference of the right type to the storage, and under
-/// the test the cell is that type already — it is only the compiler that has not been told. Casting
-/// the cell through <see cref="Object"/> tells it, and taking <c>Storage</c> from the result is then
-/// an ordinary <c>ref Int32</c>. The values cross the same way. Every one of those casts folds away
-/// with the test that guards it: the reference cast to nothing at all, and the box and unbox around
-/// the values removed before they are ever emitted, so nothing here allocates.
+/// This replaces an earlier set of overloads written against the closed types
+/// (<c>Atomic&lt;Int64&gt;</c> and so on). Those only helped callers who wrote the concrete type:
+/// overload resolution happens where the call is written, and in generic code <c>T</c> is still a type
+/// parameter there, so generic callers always got the loop. Specialising inside the generic method
+/// covers both kinds of caller.
 /// </para>
 /// <para>
-/// This used to be a second set of extensions declared against the closed types, which won overload
-/// resolution and so got the instruction to anyone who named <c>Atomic&lt;Int64&gt;</c> outright. It
-/// could not help generic code, because overload resolution happens where the type is written down and
-/// there it is still a parameter — so every <c>T</c> paid for a loop. Specialising here covers both,
-/// and the closed set was 200 lines saying the same thing a second time.
-/// </para>
-/// <para>
-/// The values returned follow <see cref="Interlocked"/>, including where it is inconsistent:
-/// <see cref="Add"/>, <see cref="Increment"/> and <see cref="Decrement"/> return the new value, while
-/// <see cref="And"/> and <see cref="Or"/> return the old one.
+/// Return values follow <see cref="Interlocked"/>, including its inconsistency: <see cref="Add"/>,
+/// <see cref="Subtract"/>, <see cref="Increment"/> and <see cref="Decrement"/> return the new value, while
+/// <see cref="And"/>, <see cref="Or"/> and <see cref="Xor"/> return the old one.
 /// </para>
 /// </remarks>
 public static class AtomicExtensions
 {
-	/// <summary>Adds <paramref name="addend"/> to the value.</summary>
+	/// <summary>Atomically adds <paramref name="addend"/> to the value.</summary>
 	/// <typeparam name="T">The type of the value held by the cell.</typeparam>
 	/// <param name="atomic">The cell to add to.</param>
 	/// <param name="addend">The value to add.</param>
@@ -75,6 +92,10 @@ public static class AtomicExtensions
 			if (typeof(T) == typeof(UInt64))
 				return (T)(Object)Interlocked.Add(ref ((Atomic<UInt64>)(Object)atomic).Storage, (UInt64)(Object)addend);
 		}
+
+		if (!Atomic<T>.IsLockFree)
+			lock (atomic)
+				return atomic.Storage += addend;
 
 		var current = atomic.Read();
 		while (true)
@@ -125,6 +146,10 @@ public static class AtomicExtensions
 			}
 		}
 
+		if (!Atomic<T>.IsLockFree)
+			lock (atomic)
+				return atomic.Storage -= subtrahend;
+
 		var current = atomic.Read();
 		while (true)
 		{
@@ -156,6 +181,10 @@ public static class AtomicExtensions
 			if (typeof(T) == typeof(UInt64))
 				return (T)(Object)Interlocked.Increment(ref ((Atomic<UInt64>)(Object)atomic).Storage);
 		}
+
+		if (!Atomic<T>.IsLockFree)
+			lock (atomic)
+				return ++atomic.Storage;
 
 		var current = atomic.Read();
 		while (true)
@@ -189,6 +218,10 @@ public static class AtomicExtensions
 			if (typeof(T) == typeof(UInt64))
 				return (T)(Object)Interlocked.Decrement(ref ((Atomic<UInt64>)(Object)atomic).Storage);
 		}
+
+		if (!Atomic<T>.IsLockFree)
+			lock (atomic)
+				return --atomic.Storage;
 
 		var current = atomic.Read();
 		while (true)
@@ -224,6 +257,15 @@ public static class AtomicExtensions
 				return (T)(Object)Interlocked.And(ref ((Atomic<UInt64>)(Object)atomic).Storage, (UInt64)(Object)value);
 		}
 
+		if (!Atomic<T>.IsLockFree)
+			lock (atomic)
+			{
+				ref var storage = ref atomic.Storage;
+				var previous = storage;
+				storage = previous & value;
+				return previous;
+			}
+
 		var current = atomic.Read();
 		while (true)
 		{
@@ -256,6 +298,15 @@ public static class AtomicExtensions
 				return (T)(Object)Interlocked.Or(ref ((Atomic<UInt64>)(Object)atomic).Storage, (UInt64)(Object)value);
 		}
 
+		if (!Atomic<T>.IsLockFree)
+			lock (atomic)
+			{
+				ref var storage = ref atomic.Storage;
+				var previous = storage;
+				storage = previous | value;
+				return previous;
+			}
+
 		var current = atomic.Read();
 		while (true)
 		{
@@ -276,6 +327,15 @@ public static class AtomicExtensions
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
 
+		if (!Atomic<T>.IsLockFree)
+			lock (atomic)
+			{
+				ref var storage = ref atomic.Storage;
+				var previous = storage;
+				storage = previous ^ value;
+				return previous;
+			}
+
 		var current = atomic.Read();
 		while (true)
 		{
@@ -295,6 +355,15 @@ public static class AtomicExtensions
 	where T : IComparisonOperators<T, T, Boolean>
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
+
+		if (!Atomic<T>.IsLockFree)
+			lock (atomic)
+			{
+				ref var storage = ref atomic.Storage;
+				if (storage >= value)
+					return storage;
+				return storage = value;
+			}
 
 		var current = atomic.Read();
 		while (true)
@@ -317,6 +386,15 @@ public static class AtomicExtensions
 	where T : IComparisonOperators<T, T, Boolean>
 	{
 		ArgumentNullException.ThrowIfNull(atomic);
+
+		if (!Atomic<T>.IsLockFree)
+			lock (atomic)
+			{
+				ref var storage = ref atomic.Storage;
+				if (storage <= value)
+					return storage;
+				return storage = value;
+			}
 
 		var current = atomic.Read();
 		while (true)

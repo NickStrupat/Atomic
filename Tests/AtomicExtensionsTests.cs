@@ -97,6 +97,33 @@ public class AtomicExtensionsTests
 		Task.WhenAll(Enumerable.Range(0, Threads).Select(_ => Task.Run(action)));
 
 	[Fact]
+	public void ReadModifyWrite_WhenTheCellLocks_ComputesUnderTheLockRatherThanBetweenTwo()
+	{
+		// A cell behind its monitor can do the whole operation in one acquisition, and a loop would take
+		// one to read and another to exchange, running the operator in the gap with nothing held — where
+		// a second writer can land and send it round again. One thread at a time both give the same
+		// answer, so what is checked is where the operator ran.
+		Atomic<Witnessed>.IsLockFree.Should().BeFalse("this is about the strategy that locks");
+		var cell = new Atomic<Witnessed>(new Witnessed(0b0110, 0));
+		Witnessed.Watch(cell);
+
+		cell.Add(new Witnessed(4, 0)).Value.Should().Be(10);
+		cell.Subtract(new Witnessed(2, 0)).Value.Should().Be(8);
+		cell.Increment().Value.Should().Be(9);
+		cell.Decrement().Value.Should().Be(8);
+		cell.Or(new Witnessed(0b0011, 0)).Value.Should().Be(8, "these return the old value");
+		cell.And(new Witnessed(0b1010, 0)).Value.Should().Be(0b1011);
+		cell.Xor(new Witnessed(0b0001, 0)).Value.Should().Be(0b1010);
+		cell.Max(new Witnessed(20, 0)).Value.Should().Be(20);
+		cell.Min(new Witnessed(3, 0)).Value.Should().Be(3);
+		cell.Read().Value.Should().Be(3);
+
+		// Nine operations, each running at least one operator: none having run would pass the next line.
+		Witnessed.Calls.Should().BeGreaterThanOrEqualTo(9);
+		Witnessed.CallsOutsideTheLock.Should().Be(0, "the operator runs under the lock the cell already holds");
+	}
+
+	[Fact]
 	public void BitwiseOperations_WhenTheValueIsAnEnum_ApplyToItAtEveryWidth()
 	{
 		// An enum implements no interfaces, so it reaches none of the operator-constrained extensions.

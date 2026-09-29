@@ -27,7 +27,7 @@ dotnet run -c Release --project Benchmarks -- contention
 dotnet run -c Release --project Benchmarks -- gc
 ```
 
-Release is 139 tests; Debug is 135 + 4 skipped. Zero warnings is the standing state — keep it, because
+Release is 140 tests; Debug is 136 + 4 skipped. Zero warnings is the standing state — keep it, because
 `GenerateDocumentationFile` is on and it is what catches a `cref` to something you just deleted.
 
 The 32-bit strategies are only exercised on real 32-bit hardware — an arm32 Raspberry Pi 3B on the
@@ -132,16 +132,31 @@ refused to exchange a value it was holding while the narrow one had already stor
 retry loop offering that value back went round forever. The candidates had it too and were fixed with it: `SeqLockAtomic`'s seqlock path already had
 `BitsEqual` and now calls it first, and `BoxAtomic`'s slot path carries the same helper as the cell.
 `AtomicContractTests` holds all three to the comparison and `AtomicReflexivityTests` holds the cell to
-the loop. Bits are only compared where they mean something — a `T` holding a reference goes straight to
+the loop — a loop of its own over `TryCompareExchange`, not `Add`, which on the monitor path no longer
+compares at all and would pass against a cell that asked the type first. Bits are only compared where they mean something — a `T` holding a reference goes straight to
 the type, since reading its bits races a moving GC.
 
 Ordering bits before the type also means the type may not be asked at all, which took a test's teeth
 out: `SeqLockAtomic_ComparesOutsideTheCounter` proves a reentrant `Equals` cannot deadlock, and its
 comparand named the held value exactly, so the bits answered and `Equals` never ran. `Reentrant` gained
 an `Ignored` field for the comparand to differ in. A test that needs user equality to run now has to
-make the bits differ. The tail is `NoInlining` on purpose: `TryCompareExchange` has to stay small enough to inline into
-the loops in `AtomicExtensions`, and `CodegenTests` asserting `Increment[System.Decimal]` contains
-`Monitor` is what would notice if it stopped.
+make the bits differ. The tail is `NoInlining` so that `TryCompareExchange` can stay small enough to inline into the loops
+in `AtomicExtensions` — but it does not, under either compiler, and did not at `ef9f5ab` either:
+`Increment[double]` calls it. Nothing asserts it one way or the other. `Increment[System.Decimal]`
+containing `Monitor` was believed to be the test that would notice, and never could have been: `Read`
+inlines and brings its own lock, and that method now takes the lock itself anyway.
+
+**On the monitor path the read-modify-writes lock rather than loop.** Each of the nine in
+`AtomicExtensions` takes `lock (atomic)` under `!Atomic<T>.IsLockFree` and computes on `Storage` in
+place. The loop there took the lock twice per attempt and ran the operator between with nothing held,
+so every writer landing in the gap cost a retry. Measured against `ef9f5ab` in a worktree:
+`Decimal.Increment` 26.58 → 13.28 ns uncontended, two to four times the throughput from 1 to 8 threads,
+with `Int64.Increment` and `Decimal.Read` unmoved as the control. `IsLockFree` is exactly "the cell uses its monitor", so the gate is the strategy again rather
+than a restatement of it, and it folds, so lock-free instantiations carry no `try`/`finally`. The
+user's operator now runs under the lock, as `Equals` already did; `Witnessed` in `Tests/TestTypes.cs`
+records `Monitor.IsEntered` from inside each operator, which is how the test tells a lock from a loop
+that gives the same answer. `AtomicEnumExtensions` does not have this yet: its monitor path is only an
+8-byte enum on a 32-bit runtime, which nothing here can run but the Pi.
 
 **Return values follow `Interlocked`, inconsistencies included.** `Add`/`Increment`/`Decrement` return
 the new value; `And`/`Or`/`Xor` return the old one.
