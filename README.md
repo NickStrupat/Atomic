@@ -20,7 +20,8 @@ var current = new Atomic<String?>(null);   // null is an ordinary value, includi
 current.TryCompareExchange("first", comparand: null, out _);
 ```
 
-Targets `net10.0`, depends on nothing. One field, and the cell never boxes or allocates to store a value.
+Targets `net10.0`, depends on nothing, and brings its [analyzer](#analyzer) with it. One field, and the
+cell never boxes or allocates to store a value.
 The one allocation is not the cell's: a losing compare-exchange on a struct with no equality of its own
 boxes to call `Object.Equals` (see below).
 
@@ -248,6 +249,49 @@ unordered on x86 and arm64 alike. That needs a full fence, which `Interlocked.Me
 and which `Exchange` and `CompareExchange` already are. Java's `volatile` and C++'s default
 `memory_order_seq_cst` are stronger than this; don't carry that assumption over.
 
+## Analyzer
+
+The package ships a Roslyn analyzer that reports monitor-based synchronisation applied to a cell. Both
+forms compile — a cell is an ordinary reference type — and neither does what it looks like it does. Where
+`IsLockFree` is true the cell never takes its monitor, so a `lock` on it excludes none of the cell's
+operations on other threads. Where it is false the cell keeps its value behind that same monitor, so a
+`lock` on it blocks every other thread's operations on the cell for as long as it is held. Which one you
+get depends on `T` and the word size, not on anything written at the `lock`.
+
+The rules are reported as errors. To relax one, set its severity in an `.editorconfig`:
+
+```ini
+[*.cs]
+dotnet_diagnostic.NSAT0001.severity = warning
+```
+
+Nothing is reported inside the library itself, where locking the cell is the lock path.
+
+### NSAT0001
+
+Do not use the `lock` statement on an atomic cell.
+
+```csharp
+var counter = new Atomic<Int64>(0);
+
+lock (counter) { counter.Write(counter.Read() + 1); }   // NSAT0001: not atomic, despite appearances
+
+counter.Increment();                                     // atomic
+```
+
+To update the value from its current value, use a read-modify-write method or a `TryCompareExchange`
+loop. To guard other state together with the cell, lock a separate object.
+
+### NSAT0002
+
+Do not call `Monitor` methods (`Enter`, `TryEnter`, `Exit`, `Wait`, `Pulse`, `PulseAll`) on an atomic
+cell, for the same reasons. `Monitor.IsEntered` is not reported, since it only queries the monitor and is
+useful in assertions.
+
+```csharp
+Monitor.Enter(counter);   // NSAT0002
+```
+
 ## Benchmarks
 
 BenchmarkDotNet ShortRun, .NET 10 on an Apple M1 Max (arm64). Nanoseconds per operation, uncontended.
@@ -403,19 +447,22 @@ caller with no call and no lock left in it — under the JIT on arm64 that is a 
 
 **The monitor path locks on the instance.** Outside code holding a reference to a cell can `lock` on it
 and interfere. A private lock object would be a second field, which is the one thing this design cannot
-spend; see *Awkward sizes* above for what that field would cost.
+spend; see *Awkward sizes* above for what that field would cost. The [analyzer](#analyzer) reports such a
+lock at compile time instead.
 
 ## Repository layout
 
 | Project | |
 |---|---|
-| `Atomic/` | The library. `Atomic<T>` and its extensions, and nothing else ships. |
+| `Atomic/` | The library. `Atomic<T>` and its extensions. |
+| `Atomic.Analyzers/` | The Roslyn analyzer behind `NSAT0001` and `NSAT0002`, packed inside the library's package. |
 | `Candidates/` | `BoxAtomic<T>` and `SeqLockAtomic<T>`, the designs this one was chosen over, plus the `IAtomic<T>` interface and the struct adapters that let one suite and one harness drive all three. |
 | `Tests/` | Correctness one thread at a time, thread safety under several, and the layout, allocation and strategy facts each implementation rests on. |
+| `AnalyzerTests/` | The analyzer, run over snippets compiled against the real library. |
 | `Benchmarks/` | Per category: one operation at a time, throughput under contention, and what the allocations cost the rest of the process. |
 | `CodegenProbe/` | One call per cell operation, in methods that cannot be inlined away, for the disassembler to be pointed at. |
 
-Only `Atomic/` is packed. MIT licensed.
+Only `Atomic/` is packed, with the analyzer inside it. MIT licensed.
 
 ### Tests
 

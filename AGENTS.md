@@ -12,6 +12,8 @@ settled, and the traps this repo has already fallen into.
 | | |
 |---|---|
 | `Atomic/` | The only project that ships. `Atomic<T>`, `AtomicExtensions`, `AtomicEnumExtensions`. |
+| `Atomic.Analyzers/` | `NSAT0001`/`NSAT0002`: `lock` and `Monitor` on a cell. Packed inside `Atomic`'s package, not on its own. |
+| `AnalyzerTests/` | The analyzer over snippets compiled against the real library, or against a stand-in declaring the same type. |
 | `Candidates/` | `BoxAtomic<T>`, `SeqLockAtomic<T>`, `IAtomic<T>`, and struct adapters. Designs this one was chosen over; kept so the suite and the harness can drive all three. |
 | `Tests/` | Contract, thread safety, storage/layout, native instructions, codegen. |
 | `Benchmarks/` | BenchmarkDotNet per category, plus `contention` and `gc` modes. |
@@ -27,7 +29,7 @@ dotnet run -c Release --project Benchmarks -- contention
 dotnet run -c Release --project Benchmarks -- gc
 ```
 
-Release is 140 tests; Debug is 136 + 4 skipped. Zero warnings is the standing state — keep it, because
+Release is 160 tests (140 in `Tests`, 20 in `AnalyzerTests`); Debug is 156 + 4 skipped. Zero warnings is the standing state — keep it, because
 `GenerateDocumentationFile` is on and it is what catches a `cref` to something you just deleted.
 
 The 32-bit strategies are only exercised on real 32-bit hardware — an arm32 Raspberry Pi 3B on the
@@ -160,6 +162,19 @@ that gives the same answer. `AtomicEnumExtensions` does not have this yet: its m
 
 **Return values follow `Interlocked`, inconsistencies included.** `Add`/`Increment`/`Decrement` return
 the new value; `And`/`Or`/`Xor` return the old one.
+
+**The analyzer exempts the assembly that declares `Atomic<T>`, and nothing else.** The library's own
+`lock (this)` and `lock (atomic)` are its lock path, and the analyzer runs over the library's build, so
+without the exemption the library fails to compile with 13 `NSAT0001`s — which is how the exemption test
+was falsified (with `-p:RunAnalyzers=false`, so the snippet test could build at all). The exemption test
+is paired with the same stand-in compiled as a library and locked from outside, without which it would
+pass just as well if the analyzer had never recognised the stand-in.
+
+**`Atomic.Analyzers` overrides `PublishAot`, `RuntimeIdentifier` and `SelfContained`.** A publish passes them
+to every project in the graph, restore included — `UndefineProperties` on the reference does not reach
+restore — and `netstandard2.0` rejects them. The first symptom was not a failure: the two NativeAOT codegen
+tests turned into skips, because a publish that cannot run is reported as unavailable. Check the skip
+count, not just the failure count, after touching any project file.
 
 ## Settled — do not re-open without new information
 

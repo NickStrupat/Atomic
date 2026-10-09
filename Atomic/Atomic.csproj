@@ -15,7 +15,7 @@
         <Version>0.1.0</Version>
         <Authors>Nick Strupat</Authors>
         <Copyright>Copyright © 2026 Nick Strupat</Copyright>
-        <Description>A generic atomic cell for .NET. Read, Write and Exchange allocate nothing, for any T. Lock-free for references and any unmanaged value up to a machine word, including the 3-, 5-, 6- and 7-byte structs that no interlocked instruction matches, and for Int64 and UInt64 on 32-bit runtimes too. Everything else takes a monitor instead, and Atomic&lt;T&gt;.IsLockFree reports which one you got.</Description>
+        <Description>A generic atomic cell for .NET. Read, Write and Exchange allocate nothing, for any T. Lock-free for references and any unmanaged value up to a machine word, including the 3-, 5-, 6- and 7-byte structs that no interlocked instruction matches, and for Int64 and UInt64 on 32-bit runtimes too. Everything else takes a monitor instead, and Atomic&lt;T&gt;.IsLockFree reports which one you got. Ships a Roslyn analyzer that reports lock statements and Monitor calls on a cell.</Description>
         <PackageTags>atomic;interlocked;lock-free;concurrency;threading;thread-safety;compare-exchange;cas;volatile;memory-model</PackageTags>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
         <PackageReadmeFile>README.md</PackageReadmeFile>
@@ -26,9 +26,19 @@
         <EmbedUntrackedSources>true</EmbedUntrackedSources>
         <IncludeSymbols>true</IncludeSymbols>
         <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+        <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
     </PropertyGroup>
 
     <ItemGroup>
+        <!-- Builds the analyzer before this project and runs it over this project's own code, where it
+             reports nothing by design: the cell's own locks are its lock path. -->
+        <ProjectReference Include="..\Atomic.Analyzers\Atomic.Analyzers.csproj"
+                          ReferenceOutputAssembly="false" OutputItemType="Analyzer" PrivateAssets="all" />
+
+        <!-- Ships the analyzer inside this package so consumers get it automatically. -->
+        <None Include="..\Atomic.Analyzers\bin\$(Configuration)\netstandard2.0\Atomic.Analyzers.dll"
+              Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+
         <None Include="../README.md" Pack="true" PackagePath="\" />
         <None Include="../LICENSE" Pack="true" PackagePath="\" />
     </ItemGroup>

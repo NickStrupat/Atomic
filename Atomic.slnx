@@ -1,4 +1,6 @@
 <Solution>
+  <Project Path="AnalyzerTests/AnalyzerTests.csproj" />
+  <Project Path="Atomic.Analyzers/Atomic.Analyzers.csproj" />
   <Project Path="Atomic/Atomic.csproj" />
   <Project Path="Benchmarks/Benchmarks.csproj" />
   <Project Path="Candidates/Candidates.csproj" />

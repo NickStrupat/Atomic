@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <WarningsAsErrors>nullable</WarningsAsErrors>
+
+        <IsPackable>false</IsPackable>
+        <IsTestProject>true</IsTestProject>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" />
+        <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.5.1" />
+        <PackageReference Include="xunit.v3.mtp-v2" Version="3.2.2" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <Using Include="Xunit" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <!-- Referenced as ordinary libraries: the analyzer is instantiated by the tests, and Atomic<T> is
+             compiled into the test snippets. Neither is applied to this project's own build. -->
+        <ProjectReference Include="..\Atomic\Atomic.csproj" />
+        <ProjectReference Include="..\Atomic.Analyzers\Atomic.Analyzers.csproj" />
+    </ItemGroup>
+
+</Project>
