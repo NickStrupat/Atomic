@@ -473,9 +473,9 @@ threads at once, and a failure there is a race that may not:
 
 | | |
 |---|---|
-| No lost updates | Eight threads incrementing through compare-exchange arrive at the full count, for a word, a wide value and a value holding a reference. |
+| No lost updates | One thread per core (2 to 8) incrementing through compare-exchange arrive at the full count, for a word, a wide value and a value holding a reference. |
 | Exchange conserves | Every thread swaps in tokens nobody else has and keeps what it displaced. The tokens taken out, plus the one left in the cell, are exactly the tokens put in. A swap that dropped a write or handed one value to two threads shows up here and nowhere else. |
-| One winner | Eight threads released from a barrier compare-exchange against the same comparand, five hundred times. Exactly one wins each round. |
+| One winner | Threads released together from a barrier compare-exchange against the same comparand, five hundred times. Exactly one wins each round. |
 | Publication | A reader that sees a sequence number published through a second cell sees the payload written before it — the acquire/release guarantee, which needs two cells to be a question at all. |
 | No tearing | A writer stores values whose parts agree; a reader that sees parts disagreeing has caught a write half done. Across eight shapes that between them cover every strategy. |
 
@@ -487,7 +487,9 @@ because the pool was running its eight bodies one after another rather than at o
 tests had the same flaw. It then caught an exchange test that noticed a plainly broken cell one run in
 twenty, because starting a thread costs more than that test's body took to finish, so the threads never
 overlapped. Both are fixed by releasing dedicated threads together from a barrier, and by re-syncing
-them on it as they go rather than only at the start.
+them on it as they go rather than only at the start. The barrier spins rather than blocks, and there is
+one thread per core: on a 4-core CI runner, eight threads behind a blocking barrier woke one after
+another and let the broken cell win every round, five attempts running.
 
 That does not make detection certain, and the check does not pretend otherwise. Running the whole suite
 in parallel puts far more threads on the machine than it has cores, and a race needing two of them

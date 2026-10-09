@@ -212,8 +212,14 @@ count, not just the failure count, after touching any project file.
 caught genuine weaknesses three separate times in this repo. Concretely:
 
 - Five concurrency tests passed vacuously because `Task.Run` serialised the bodies under pool load.
-  Fixed with dedicated threads released from a `Barrier`, re-synced periodically rather than only at
+  Fixed with dedicated threads released from a barrier, re-synced periodically rather than only at
   the start — thread startup exceeded one test's body, so the threads never overlapped at all.
+- The one-winner test let `NaiveAtomic` through five attempts running on the 4-core Ubuntu CI runner,
+  with eight threads behind a `Barrier`: a blocked waiter is woken through the scheduler, so with more
+  threads than cores they came out one after another and never raced. Fixed with a spinning barrier
+  (`SpinBarrier`, no back-off) and one thread per core, between 2 and 8. The development machine has
+  enough cores to hide this, so it could not be reproduced here; `DOTNET_PROCESSOR_COUNT=2` or `=4` sets
+  the thread count, but not the cores, and is the closest stand-in.
 - A codegen assertion that only looks for something's *absence* passes just as happily pointed at
   nothing. Test 2 stayed green with the specialisation removed, because the loop's CAS inlines and
   leaves no call symbol. Read mnemonics, and pair every assertion with a case that must show the

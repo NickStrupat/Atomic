@@ -15,7 +15,8 @@ namespace Tests;
 /// </para>
 /// <list type="bullet">
 /// <item><description>
-/// Threads are released together from a barrier rather than started one by one.
+/// Threads are released together from a spinning barrier rather than started one by one, and there are
+/// never more of them than cores, so released threads are all running at once.
 /// </description></item>
 /// <item><description>
 /// Values are chosen so that a torn or lost value is obviously wrong, not plausible.
@@ -31,9 +32,17 @@ namespace Tests;
 /// </remarks>
 public abstract class ThreadSafetyTests
 {
-	private const Int32 Threads = 8;
+	/// <summary>How many threads race: one per core, between 2 and 8.</summary>
+	/// <remarks>
+	/// A race needs its threads executing at the same instant, which takes a core each. With more threads
+	/// than cores, the extra ones are queued behind the scheduler and come out after the others' few
+	/// nanoseconds of read-compare-store are over. Eight threads on a 4-core CI runner let a cell with no
+	/// synchronisation at all win every round of the one-winner test five times running.
+	/// </remarks>
+	private static readonly Int32 Threads = Math.Clamp(Environment.ProcessorCount, 2, 8);
+
 	private const Int32 IncrementsPerThread = 10_000;
-	private const Int64 Total = Threads * (Int64)IncrementsPerThread;
+	private static readonly Int64 Total = Threads * (Int64)IncrementsPerThread;
 
 	/// <summary>How long each test that races a writer against a reader runs.</summary>
 	private static readonly TimeSpan Window = TimeSpan.FromMilliseconds(250);
@@ -143,7 +152,7 @@ public abstract class ThreadSafetyTests
 	public void CompareExchange_WhenTheComparandIsEqualButNotIdentical_StillLetsExactlyOneWin()
 	{
 		// Tolerance ignores its second field, so every comparand below is the value the cell holds and
-		// none of them is its bit pattern. That puts all eight threads past the single instruction and
+		// none of them is its bit pattern. That puts every thread past the single instruction and
 		// into the retry that follows it, every round, which is the point: a thread that loses the race
 		// there has to go round on what it saw rather than report an inequality that never happened.
 		const Int32 Rounds = 500;
@@ -346,10 +355,13 @@ public abstract class ThreadSafetyTests
 	/// Starting together is not enough either. On a busy machine the scheduler pauses a thread mid-run and
 	/// the others finish without it, so the body also gets the barrier and can re-synchronise as it goes.
 	/// </para>
+	/// <para>
+	/// The barrier spins rather than blocks; see <see cref="SpinBarrier"/> for why.
+	/// </para>
 	/// </remarks>
-	private static void RunOnDedicatedThreads(Action<Int32, Barrier> body)
+	private static void RunOnDedicatedThreads(Action<Int32, SpinBarrier> body)
 	{
-		using var barrier = new Barrier(Threads);
+		var barrier = new SpinBarrier(Threads);
 		Join(Enumerable.Range(0, Threads)
 			.Select(index => new Thread(() =>
 			{
@@ -367,6 +379,46 @@ public abstract class ThreadSafetyTests
 			thread.Start();
 		foreach (var thread in threads)
 			thread.Join();
+	}
+
+	/// <summary>A reusable barrier whose waiters spin rather than block, so they all leave it at once.</summary>
+	/// <param name="participants">How many threads must arrive before any is released.</param>
+	/// <remarks>
+	/// <see cref="Barrier"/> puts its waiters to sleep, and waking them goes through the scheduler, which
+	/// resumes them one after another. Each resumed thread can finish its round before the next is running,
+	/// so the race the round exists for never happens. A waiter here is already running when it is released:
+	/// it only has to see one counter change, which reaches every core within nanoseconds. It never backs
+	/// off, since backing off is what would spread the departures out again, and it yields only now and
+	/// then, so a thread the scheduler has paused still gets to arrive.
+	/// </remarks>
+	private sealed class SpinBarrier(Int32 participants)
+	{
+		/// <summary>How many spins a waiter makes between yields.</summary>
+		private const Int32 SpinsPerYield = 256;
+
+		private Int32 arrived;
+		private Int32 round;
+
+		/// <summary>Arrives at the barrier and spins until every participant has arrived.</summary>
+		public void SignalAndWait()
+		{
+			var current = Volatile.Read(ref round);
+			if (Interlocked.Increment(ref arrived) == participants)
+			{
+				// Reset before releasing: a released thread may arrive for the next round at once.
+				Volatile.Write(ref arrived, 0);
+				Interlocked.Increment(ref round);
+				return;
+			}
+
+			for (var spins = 1; Volatile.Read(ref round) == current; spins++)
+			{
+				if (spins % SpinsPerYield == 0)
+					Thread.Yield();
+				else
+					Thread.SpinWait(1);
+			}
+		}
 	}
 }
 
