@@ -22,7 +22,8 @@ namespace NickStrupat;
 /// second field.
 /// </description></item>
 /// <item><description>
-/// A wider value with no references uses the counter as a seqlock. A writer makes the counter odd,
+/// Any other value with no references — an odd size, an 8-byte value aligned to less than 8, or
+/// anything wider — uses the counter as a seqlock. A writer makes the counter odd,
 /// writes, then makes it even again. A reader reads the counter, copies the value, and reads the counter
 /// again; if the counter was odd or changed, it retries.
 /// </description></item>
@@ -338,8 +339,10 @@ public sealed class SeqLockAtomic<T> : IAtomic<T>
 	/// <remarks>
 	/// The counter is 64 bits so that it can never wrap around to a value a reader is still holding. With
 	/// 32 bits, a reader descheduled across 2 billion writes could see its starting value again and accept
-	/// a torn snapshot; with 64 bits that is unreachable. The extra width costs nothing here: next to a
-	/// value of a word or more, the counter occupies space that would be padding anyway.
+	/// a torn snapshot; with 64 bits that is unreachable. Beside a value of a word or more, the extra
+	/// 4 bytes land where a 32-bit counter would have left padding, so they cost nothing. Beside the odd
+	/// sizes below a word they cost a word per cell: <c>SeqLockAtomic&lt;Three&gt;</c> is 32 bytes where a
+	/// 32-bit counter would make it 24.
 	/// </remarks>
 	private void ReleaseWrite(Int64 stamp) => Volatile.Write(ref version, stamp + 2);
 

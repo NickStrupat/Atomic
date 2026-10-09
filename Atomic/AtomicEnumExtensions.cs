@@ -9,8 +9,9 @@ namespace NickStrupat;
 /// <remarks>
 /// <para>
 /// <see cref="AtomicExtensions"/> cannot serve enums. Its bitwise methods require
-/// <see cref="IBitwiseOperators{TSelf,TOther,TResult}"/>, and an enum cannot implement interfaces, even
-/// though C# lets you apply <c>&amp;</c>, <c>|</c> and <c>^</c> to one. Flags are the most common reason to
+/// <see cref="IBitwiseOperators{TSelf,TOther,TResult}"/>, and an enum cannot declare interface
+/// implementations of its own, so it never implements that one, even though C# lets you apply
+/// <c>&amp;</c>, <c>|</c> and <c>^</c> to an enum. Flags are the most common reason to
 /// want atomic bitwise operations at all, so these fill that gap.
 /// </para>
 /// <para>

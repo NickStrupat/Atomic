@@ -7,8 +7,9 @@ namespace Benchmarks;
 public readonly record struct Three(Byte A, Byte B, Byte C);
 
 /// <summary>
-/// A struct holding a reference. It fits in a word but still cannot be swapped in place: the reference
-/// must be written through the GC write barrier, which a widened word swap would bypass.
+/// A struct holding a reference. Any such struct is kept behind a lock or in a box, whatever its size,
+/// because the reference must be written through the GC write barrier, which a raw word swap would
+/// bypass. This one is also 16 bytes, wider than a word.
 /// </summary>
 public readonly record struct Tagged(Int32 Number, String Text);
 

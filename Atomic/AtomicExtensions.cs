@@ -8,8 +8,9 @@ namespace NickStrupat;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Each operation picks one of three implementations. The choice depends only on the type, so the
-/// compiler folds it away and each instantiation contains exactly one of them:
+/// Each operation picks one of three implementations. The choice depends only on the type and the
+/// runtime's word size, so the compiler folds it away and each instantiation contains exactly one of
+/// them:
 /// </para>
 /// <list type="number">
 /// <item><description>
@@ -53,7 +54,7 @@ namespace NickStrupat;
 /// just does not know it. Casting the cell through <see cref="Object"/> tells it, and <c>Storage</c> on the
 /// result is then an ordinary <c>ref Int32</c>. Values are cast through <see cref="Object"/> the same way.
 /// All of these casts disappear along with the test: the reference cast compiles to nothing, and the
-/// boxing and unboxing of values is removed before any code is emitted, so nothing here allocates.
+/// boxing and unboxing of values is removed before any code is emitted, so the casts allocate nothing.
 /// </para>
 /// <para>
 /// This replaces an earlier set of overloads written against the closed types
@@ -65,7 +66,13 @@ namespace NickStrupat;
 /// <para>
 /// Return values follow <see cref="Interlocked"/>, including its inconsistency: <see cref="Add"/>,
 /// <see cref="Subtract"/>, <see cref="Increment"/> and <see cref="Decrement"/> return the new value, while
-/// <see cref="And"/>, <see cref="Or"/> and <see cref="Xor"/> return the old one.
+/// <see cref="And"/>, <see cref="Or"/> and <see cref="Xor"/> return the old one. <see cref="Max"/> and
+/// <see cref="Min"/> return the new value.
+/// </para>
+/// <para>
+/// An exception thrown by the type's operator (such as <see cref="OverflowException"/> from
+/// <see cref="Decimal"/>) propagates, and the value is left unchanged. On the loop path the operator runs
+/// once per attempt, so under contention it can run more than once per call.
 /// </para>
 /// </remarks>
 public static class AtomicExtensions

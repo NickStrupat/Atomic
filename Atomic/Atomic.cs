@@ -9,8 +9,8 @@ namespace NickStrupat;
 /// <typeparam name="T">The type of the value held by the cell.</typeparam>
 /// <remarks>
 /// <para>
-/// How the cell reaches its value depends only on <typeparamref name="T"/>, and is fixed when the code
-/// is compiled. There are four strategies:
+/// How the cell reaches its value depends only on <typeparamref name="T"/> and the runtime's word size,
+/// and is fixed when the code is compiled. There are four strategies:
 /// </para>
 /// <list type="bullet">
 /// <item><description>
@@ -34,8 +34,9 @@ namespace NickStrupat;
 /// only field this class declares. First, a lone field starts one word into the object, and objects are
 /// word-aligned, so the field is word-aligned. Second, an object's minimum size leaves a whole word for
 /// the field, so a value narrower than a word has spare bytes after it that nothing else uses. Every
-/// write zeroes those spare bytes, so a given value always has the same bit pattern, and
-/// <see cref="CompareExchange"/> can compare whole words.
+/// write zeroes those spare bytes, so they never make two equal values look different, and
+/// <see cref="CompareExchange"/> can compare whole words. Padding inside the value is copied as it is;
+/// when that makes the bits differ, the cell falls back to the type's equality.
 /// </para>
 /// <para>
 /// The view is a word rather than 8 bytes because both facts are stated in words. At 64 bits a word is
@@ -49,8 +50,9 @@ namespace NickStrupat;
 /// lets <see cref="Interlocked"/> work on them there at all. <see cref="Volatile"/> is not enough — an
 /// 8-byte volatile read or write can tear on a 32-bit runtime — so reads use
 /// <see cref="Interlocked.Read(ref readonly Int64)"/> and writes use
-/// <see cref="Interlocked.Exchange(ref Int64, Int64)"/>. No other 8-byte type gets this path, because it
-/// needs the view to be exactly the value and the type's equality to be exactly its bits.
+/// <see cref="Interlocked.Exchange(ref Int64, Int64)"/>. No other 8-byte type gets this path: the runtime
+/// only promises that alignment for these two types, and the path has no fallback to the type's
+/// equality, so it needs a type whose equality is exactly its bits.
 /// </para>
 /// <para>
 /// Do not add a second field. The runtime may place it first, which moves the value off a word boundary
@@ -89,7 +91,15 @@ public sealed class Atomic<T>
 	/// <param name="value">The initial value.</param>
 	public Atomic(T value) => storage = value;
 
-	/// <summary>Gets a value indicating whether the cell reads and writes without taking a lock.</summary>
+	/// <summary>
+	/// Gets a value indicating whether every operation on a cell of this type completes without taking
+	/// a lock.
+	/// </summary>
+	/// <remarks>
+	/// The answer depends on <typeparamref name="T"/> and the runtime's word size, and is a constant for
+	/// each. Where it is <see langword="false"/>, reads, writes and every operation in
+	/// <see cref="AtomicExtensions"/> take a lock on the cell.
+	/// </remarks>
 	public static Boolean IsLockFree => IsInline || IsReference;
 
 	/// <summary>
@@ -267,10 +277,15 @@ public sealed class Atomic<T>
 	/// <see cref="EqualityComparer{T}.Default"/> says the two are equal, even if their bits differ.
 	/// </description></item>
 	/// <item><description>
-	/// The two have identical bits, even if the type says they are unequal. Without this, a cell could
-	/// refuse a comparand naming the exact value it holds.
+	/// For a value type holding no references, the two have identical bits, even if the type says they
+	/// are unequal. Without this, a cell could refuse a comparand naming the exact value it holds.
 	/// </description></item>
 	/// </list>
+	/// <para>
+	/// The type's equality is only called when the bits differ. For a struct with neither an
+	/// <see cref="Object.Equals(Object)"/> override nor <see cref="IEquatable{T}"/>, that call boxes both
+	/// values, so a comparison that misses allocates.
+	/// </para>
 	/// <para>
 	/// To find out whether the exchange happened, call <see cref="TryCompareExchange"/> in a loop rather
 	/// than comparing the returned value yourself.

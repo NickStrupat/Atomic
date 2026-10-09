@@ -2,8 +2,8 @@
 
 A generic atomic cell for .NET. `Read`, `Write` and `Exchange` allocate nothing, for any `T`. Lock-free
 for references and any unmanaged value up to a word — including the 3-, 5-, 6- and 7-byte structs that no
-interlocked instruction matches — everything else takes a monitor instead, and `IsLockFree` tells you
-which one you got.
+interlocked instruction matches — and for `Int64` and `UInt64` on 32-bit runtimes too. Everything else
+takes a monitor instead, and `IsLockFree` tells you which one you got.
 
 ```
 dotnet add package NickStrupat.Atomic
@@ -20,20 +20,22 @@ var current = new Atomic<String?>(null);   // null is an ordinary value, includi
 current.TryCompareExchange("first", comparand: null, out _);
 ```
 
-Targets `net10.0`, depends on nothing. One field, no boxing, nothing allocated per operation.
+Targets `net10.0`, depends on nothing. One field, and the cell never boxes or allocates to store a value.
+The one allocation is not the cell's: a losing compare-exchange on a struct with no equality of its own
+boxes to call `Object.Equals` (see below).
 
 ## How a value is stored
 
-The strategy is chosen from `T` alone and folds to a constant when the JIT or the AOT compiler
-specialises the cell, so a given `Atomic<T>` compiles to one path with no test left in it.
+The strategy is chosen from `T` and the runtime's word size, and folds to a constant when the JIT or the
+AOT compiler specialises the cell, so a given `Atomic<T>` compiles to one path with no test left in it.
 
-| `T` | Strategy | Cell size |
+| `T` | Strategy | Cell size at 64 bits |
 |---|---|---|
-| Any reference type | `Interlocked` on the reference, write barrier intact | 24 B |
-| Unmanaged, ≤ one word | `Interlocked` on a word sized view of the field | 24 B |
-| `Int64` or `UInt64` past the word | `Interlocked` on the field, reads and writes included | 24 B |
-| Wider than that | `lock (this)` | 32 B and up |
-| A value type holding references | `lock (this)` | 32 B and up |
+| Any reference type | `Volatile` reads and writes, `Interlocked` exchanges, on the reference; write barrier intact | 24 B |
+| Unmanaged, ≤ one word | `Volatile` reads and writes, `Interlocked` exchanges, on a word-sized view of the field | 24 B |
+| `Int64` or `UInt64` on a 32-bit runtime | `Interlocked` for everything, reads and writes included | — (32-bit only) |
+| Unmanaged, wider than that | `lock (this)` | 32 B and up |
+| A value type holding references | `lock (this)` | 24 B and up |
 
 This table is about storage and nothing else. It does not decide how a comparand is compared — that
 follows from `T` alone and does not change when a type crosses a row.
@@ -51,8 +53,10 @@ Atomic<Decimal>.IsLockFree   // false — 16 bytes, so the monitor
 No processor has a 3-byte compare-and-swap, so a 3-byte struct would normally need a lock. It
 doesn't here. Because `storage` is the only field the class declares, it begins on a word boundary and
 the minimum size of an object leaves a whole word there — so the cell swaps the whole word and
-lets the slack ride along. Writes zero the slack, so a given value always has the same bit pattern and
-`CompareExchange` compares something meaningful.
+lets the slack ride along. Every write zeroes the slack, so the slack never makes two equal values look
+different, and a `CompareExchange` whose comparand is the value held succeeds on the first instruction.
+Padding *inside* a struct is copied as it is; when that makes the bits differ, the cell asks the type
+(see *What "atomic" guarantees here*).
 
 That is why the class has exactly one field, and why it uses a monitor rather than a private lock object
 for the values it cannot swap in place: a second field would let the runtime seat the value off a word
@@ -60,47 +64,57 @@ boundary and take the trick away from every instantiation.
 
 Widening is not quite free, and it is lopsided. Reading a 3-byte value costs 0.79 ns against 0.56
 for a full word, because the word is loaded once and the value taken out of it. Writing costs 1.52 ns
-against 0.40, because the value has to be put into a zeroed word first — 3-byte stores and an 8-byte
-load of the same stack slot, which is a store-to-load forward the hardware cannot satisfy from the
-store buffer. Still cheaper than the 13 ns a lock would cost, which is the comparison that matters.
+against 0.40, because the value has to be put into a zeroed word first — narrow stores totalling 3
+bytes and an 8-byte load of the same stack slot, which is a store-to-load forward the hardware cannot
+satisfy from the store buffer. Still cheaper than the 13 ns a lock would cost, which is the comparison
+that matters.
 
 ## Read-modify-write
 
-Generic, over any `T` with the matching operator — via a compare-and-swap loop where the cell is
-lock-free, and in one acquisition of its lock where it is not:
+Generic, over any `T` with the matching operator — a single instruction where one exists (below),
+otherwise a compare-and-swap loop where the cell is lock-free, and one acquisition of its lock where it is
+not:
 
 ```csharp
 Add  Subtract  Increment  Decrement  And  Or  Xor  Max  Min
 ```
 
 Return values follow `Interlocked`, inconsistencies included: `Add`, `Subtract`, `Increment` and
-`Decrement` return the **new** value; `And`, `Or` and `Xor` return the **old** one.
+`Decrement` return the **new** value; `And`, `Or` and `Xor` return the **old** one. `Max` and `Min` return
+the new value too — the larger (or smaller) of the old value and the argument.
+
+An exception thrown by `T`'s operator — `Decimal` overflowing, say — propagates and leaves the value
+unchanged. On the loop the operator runs once per attempt, so under contention it can run more than once
+per call; keep it free of side effects.
 
 For `Atomic<Int32>`, `Atomic<Int64>`, `Atomic<UInt32>` and `Atomic<UInt64>`, `Increment`, `Decrement`,
 `Add`, `Subtract`, `And` and `Or` issue the instruction directly with no loop. You don't opt in: the
-method tests `typeof(T)`, and the JIT folds that test when it specialises the method, so
-`Atomic<Int64>.Increment` is one `ldaddal` with nothing in front of it, and `Atomic<Decimal>.Increment`
-is the loop with nothing in front of it either. `Subtract` adds the negation, there being no
-interlocked subtract — one extra instruction, and it wraps correctly even for the value whose negation
-is itself an overflow.
+method tests `typeof(T)`, and the compiler folds that test when it specialises the method, so on arm64
+`Atomic<Int64>.Increment` is a null check and one `ldaddal`, `Atomic<Double>.Increment` is the
+compare-and-swap loop, and `Atomic<Decimal>.Increment` takes the lock once — with no type test left in any
+of them. `Subtract` adds the negation, there being no interlocked subtract — one extra instruction, and
+it wraps correctly even for the value whose negation is itself an overflow.
 
-Enums reach `And`, `Or` and `Xor` through `AtomicEnumExtensions`, which is a separate class because
-constraints are not part of a signature — an enum implements no interfaces and so satisfies none of the
-operator constraints above. You still write `cell.Or(flag)`; the constraints pick the one that applies.
-`And` and `Or` take the instruction at every width an enum can be, a 1- or 2-byte one masked through the
-same word a wider one uses. Only `Xor` is a loop, there being no interlocked exclusive or to reach.
+Enums reach `And`, `Or` and `Xor` through `AtomicEnumExtensions`. An enum cannot declare interface
+implementations of its own, so it never satisfies the operator constraints above, and the enum versions
+live in a separate class because constraints are not part of a signature. You still write `cell.Or(flag)`;
+the constraints pick the one that applies. `And` and `Or` take the instruction wherever the cell keeps the
+enum in place: 4- and 8-byte enums at their own width, 1- and 2-byte ones through the 4-byte instruction on
+the word they are kept in. An 8-byte enum on a 32-bit runtime is kept behind the lock and takes the loop,
+and `Xor` is a loop at every width, there being no interlocked exclusive or to reach.
 
 ```csharp
 var access = new Atomic<Access>(Access.Read);
 access.Or(Access.Write);       // returns the old value, as And, Or and Xor do
 ```
 
-`Xor`, `Max` and `Min` stay loops for every `T`. arm64 has a single instruction for the first
-three — `ldeoral`, `ldsmaxal`, `ldsminal` — and nothing reaches them from C#: `Interlocked` has
-no `Xor`, `Max` or `Min`, and `System.Runtime.Intrinsics.Arm` exposes no atomics at all, only
-`AdvSimd`, `ArmBase`, `Crc32`, `Dp`, `Rdm`, the crypto sets and `Sve`. The JIT emits those instructions
-solely when lowering `Interlocked`, which never asks for them. x86 would want the loop regardless,
-having no fetch-and-xor to speak of.
+`Xor`, `Max` and `Min` never get a single instruction, for any `T`: they are the loop where the cell is
+lock-free and one acquisition of the lock where it is not. arm64 has a single instruction for all three —
+`ldeoral`, `ldsmaxal`, `ldsminal` — and nothing reaches them from C#: `Interlocked` has no `Xor`, `Max` or
+`Min`, and `System.Runtime.Intrinsics.Arm` exposes no atomics at all, only `AdvSimd`, `ArmBase`, `Crc32`,
+`Dp`, `Rdm`, the crypto sets, `Sve` and `Sve2`. The JIT emits those instructions solely when lowering
+`Interlocked`, which never asks for them. x86 would want the loop regardless, having no fetch-and-xor to
+speak of.
 
 Specialising inside the method rather than declaring overloads on the concrete types is what makes this
 reach generic code. Overload resolution happens where the type is written down, and here it isn't:
@@ -109,8 +123,8 @@ reach generic code. Overload resolution happens where the type is written down, 
 static void Bump<T>(Atomic<T> cell) where T : IIncrementOperators<T> => cell.Increment();
 ```
 
-Uncontended none of this is measurable, since an uncontended loop succeeds on its first try — 6.91 ns
-against 7.01. Contended it is the whole difference. Four threads incrementing one cell:
+Uncontended none of this is measurable, since an uncontended loop succeeds on its first try — 6.97 ns
+against 7.11 (see *Benchmarks*). Contended it is the whole difference. Four threads incrementing one cell:
 
 ```
 Interlocked.Increment on a plain field   30.8 Mops/s
@@ -143,7 +157,7 @@ the two in the opposite order; nothing in the BCL's numeric types does.
 
 ## What "atomic" guarantees here
 
-Three things people reasonably expect from the name, one of which is true.
+What each operation promises, and what it does not.
 
 **Each operation is linearizable, and operations do not compose.** A read, a write, an exchange or a
 compare-exchange each take effect at a single instant, and no caller ever sees a torn value. Two of them
@@ -159,13 +173,14 @@ step and isn't.
 
 **A comparand is compared by what `T` is, not by how wide it is.** A reference is compared by identity
 and by nothing else. A value type is compared with `EqualityComparer<T>.Default` — its `IEquatable<T>`
-implementation, or the one the compiler wrote for a `record struct` — whatever its width and whichever
-strategy the cell picked. Identical bits are taken as the same value without asking the type, which only
-shows for a type that calls a value unequal to itself:
+implementation (including the one the compiler writes for a `record struct`), or failing that its
+`Equals(Object)` — whatever its width and whichever strategy the cell picked. For a value type holding no
+references, identical bits are taken as the same value without asking the type, which only shows for a
+type that calls a value unequal to itself:
 
 ```csharp
 new Atomic<Double>(-0.0).CompareExchange(99.0, comparand: 0.0);    // stores: -0.0 equals 0.0
-new Atomic<Decimal>(1.0m).CompareExchange(99m, comparand: 1.00m);  // stores, and always did
+new Atomic<Decimal>(1.0m).CompareExchange(99m, comparand: 1.00m);  // stores: 1.0m equals 1.00m
 
 // A record struct that gains a field crosses to the monitor, and goes on comparing the same way.
 ```
@@ -181,7 +196,7 @@ by value, because that is what the `Equals` the compiler wrote does. "Identity a
 **A struct with neither `Equals` nor `IEquatable<T>` can allocate on a miss.** `EqualityComparer<T>.Default`
 for such a type is `ObjectEqualityComparer<T>`, which boxes both sides to reach `Object.Equals`. The cell
 tries bits first, so a hit — every successful compare-exchange, the common case in a retry loop — never
-reaches it; only a miss does, and it costs the same whether the type fits the word or not:
+reaches it; only a miss does, whether or not the type fits in a word:
 
 ```csharp
 struct Plain { public Int32 A, B, C; }               // no Equals override, no IEquatable<T>
@@ -193,7 +208,8 @@ cell.CompareExchange(new Plain { A = 9 }, new Plain { A = 7 });   // miss: 64 by
 
 `record struct` and anything implementing `IEquatable<T>` are unaffected — the comparer the compiler
 writes never boxes. `Read`, `Write` and `Exchange` never call `Equals` and never allocate, whatever `T`
-is; this is specific to a losing `CompareExchange` or `TryCompareExchange` against a type with neither.
+is; this is specific to a losing `CompareExchange` or `TryCompareExchange` against a type with neither,
+including one inside a read-modify-write loop.
 
 **Success cannot be inferred from the returned value, so ask.** The cell compares with `Equals`, and a
 caller reaching for `==` does not:
@@ -203,7 +219,8 @@ var cell = new Atomic<Double>(Double.NaN);
 var previous = cell.CompareExchange(99.0, comparand: Double.NaN);
 previous == Double.NaN   // false — and yet 99.0 was stored
 
-cell.TryCompareExchange(99.0, comparand: Double.NaN, out previous);   // true, correctly
+var other = new Atomic<Double>(Double.NaN);
+other.TryCompareExchange(99.0, comparand: Double.NaN, out previous);   // true, correctly
 ```
 
 Use `TryCompareExchange` in any loop that branches on whether the swap happened.
@@ -222,8 +239,8 @@ flag.Write(true);                   use(data.Read());   // sees 42
 ```
 
 One exception runs the other way: on a 32-bit runtime an `Int64` or `UInt64` read and write are full
-fences rather than acquire and release, because a locked compare-exchange is the only way to move 8 bytes
-indivisibly there. That is stronger than what is promised, so nothing that relies on the promise
+fences rather than acquire and release, because `Interlocked` is the only API that guarantees an 8-byte
+access is indivisible there. That is stronger than what is promised, so nothing that relies on the promise
 notices, but it is not free — don't read the 64-bit numbers below as covering it.
 
 It is not enough for a store to one cell followed by a load of another — the StoreLoad case, which is
@@ -265,7 +282,7 @@ The columns are categories of `T`, because the category is what picks a strategy
 | | `Int64` | `Three` | `String` | `Decimal` | `Tagged` |
 |---|---|---|---|---|---|
 | `Atomic` | 6.58 | 7.46² | 6.56 | 13.33 | 13.08 |
-| `BoxAtomic` | 6.80 | 7.34² | 6.63 | 12.63¹ | 13.72 |
+| `BoxAtomic` | 6.80 | 7.34² | 6.63 | 12.63¹ | 13.72¹ |
 | `SeqLockAtomic` | 6.60 | **9.62**² | 6.56 | **8.65** | 13.46 |
 
 ¹ Allocates 32 bytes per operation. Nothing else in these tables allocates at all, and what those
@@ -291,11 +308,13 @@ instructions. The categories that separate them are the ones nothing can swap in
 - **`Decimal` and `Tagged` go to `BoxAtomic` for reads, by a wide margin.** A read is one load of a
   reference to an immutable box — 0.70 ns against 13.08 — and it allocates nothing. Its *write*
   advantage does not survive being charged for the collections it causes.
-- **`Three` is where `SeqLockAtomic` falls over.** It widens sizes of 1, 2, 4 and 8 bytes and
-  sends everything else to the version counter, so a 3-byte write costs 9.14 ns against 1.41.
+- **`Three` is where `SeqLockAtomic` falls over.** It swaps only 1-, 2-, 4- and 8-byte values in place,
+  at their own width, and sends everything else to the version counter, so a 3-byte write costs 9.14 ns
+  against 1.41.
 - **`Atomic<T>` ties wherever it is lock-free and trails wherever it locks** — on five of those six
   measurements; the sixth is a three-way tie at the cost of a monitor. That is the trade the library
-  makes: it allocates nothing, ever, and pays a monitor for the values that do not fit its one field.
+  makes: it never allocates to store a value, and pays a monitor for the values that do not fit its one
+  field.
 
 ```
 Interlocked.Increment on a plain field    6.926 ns
@@ -378,8 +397,9 @@ gated on the cell's strategy rather than on the word size for exactly that reaso
 against a field the cell is guarding with a monitor would be a second writer the monitor knows nothing
 about, and a `CompareExchange` could read, compare and store across an `Increment` and drop it.
 
-**NativeAOT is supported and folds fully.** `Atomic<Int32>.Read()` compiles to a single `ldapr` and
-inlines into its caller, the same as under the JIT, and is held to that by the same tests.
+**NativeAOT is supported and folds fully.** Under both compilers `Atomic<Int64>.Read()` inlines into its
+caller with no call and no lock left in it — under the JIT on arm64 that is a single `ldapur` — and
+`CodegenTests` holds both compilers to it.
 
 **The monitor path locks on the instance.** Outside code holding a reference to a cell can `lock` on it
 and interfere. A private lock object would be a second field, which is the one thing this design cannot
@@ -410,7 +430,7 @@ threads at once, and a failure there is a race that may not:
 | Exchange conserves | Every thread swaps in tokens nobody else has and keeps what it displaced. The tokens taken out, plus the one left in the cell, are exactly the tokens put in. A swap that dropped a write or handed one value to two threads shows up here and nowhere else. |
 | One winner | Eight threads released from a barrier compare-exchange against the same comparand, five hundred times. Exactly one wins each round. |
 | Publication | A reader that sees a sequence number published through a second cell sees the payload written before it — the acquire/release guarantee, which needs two cells to be a question at all. |
-| No tearing | A writer stores values whose parts agree; a reader that sees parts disagreeing has caught a write half done. Across seven shapes, one per strategy. |
+| No tearing | A writer stores values whose parts agree; a reader that sees parts disagreeing has caught a write half done. Across eight shapes that between them cover every strategy. |
 
 None of that proves thread safety — a race that was never scheduled looks exactly like one that cannot
 happen. So `ThreadSafetySuiteTests` points the whole suite at a deliberately unsynchronised cell and
