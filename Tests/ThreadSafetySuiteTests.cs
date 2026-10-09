@@ -19,7 +19,14 @@ namespace Tests;
 /// actually happening, and requiring a race to show up makes a worse test than requiring a count to be
 /// wrong. Even the ones below depend on timing a little, which is what <see cref="MustCatch"/> handles.
 /// </para>
+/// <para>
+/// These run in <see cref="RunsAlone"/>, after every parallel test has finished. The question here is
+/// whether the suite can catch a race when its threads really run at once, and beside the rest of the
+/// suite on a 4-core CI runner they did not: whichever thread count was chosen, one property or another
+/// let the broken cell through five attempts running.
+/// </para>
 /// </remarks>
+[Collection(nameof(RunsAlone))]
 public class ThreadSafetySuiteTests
 {
 	/// <summary>How many runs a property gets to catch the broken cell before the test fails.</summary>
@@ -226,3 +233,14 @@ internal sealed class NaiveThreadSafetyTests : ThreadSafetyTests
 {
 	protected override IAtomic<T> Create<T>(T value) => new NaiveAtomic<T>(value);
 }
+
+/// <summary>
+/// A collection whose tests run with nothing else running: xunit holds it back until every parallel test
+/// has finished, then runs its tests one at a time.
+/// </summary>
+/// <remarks>
+/// For tests that need the machine's cores to themselves, which on a machine with few cores no amount of
+/// arranging threads inside the test can provide.
+/// </remarks>
+[CollectionDefinition(nameof(RunsAlone), DisableParallelization = true)]
+public sealed class RunsAlone;

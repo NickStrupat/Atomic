@@ -491,10 +491,10 @@ them on it as they go rather than only at the start. The barrier spins rather th
 one thread per core: on a 4-core CI runner, eight threads behind a blocking barrier woke one after
 another and let the broken cell win every round, five attempts running.
 
-That does not make detection certain, and the check does not pretend otherwise. Running the whole suite
-in parallel puts far more threads on the machine than it has cores, and a race needing two of them
-inside the same nanosecond sometimes does not happen — measured at about one run in eight. So each
-property gets a few attempts and has to catch the broken cell in one of them. Failing every attempt in
+That does not make detection certain, and the check does not pretend otherwise. A race needing two
+threads inside the same nanosecond sometimes does not happen — measured at about one run in eight while
+the rest of the suite ran beside it. So the check runs on its own, after every parallel test has
+finished, and each property gets a few attempts and has to catch the broken cell in one of them. Failing every attempt in
 a row is a different claim from losing a coin toss, and it is the one that fails the build.
 
 ### Codegen

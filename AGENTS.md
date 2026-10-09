@@ -220,6 +220,11 @@ caught genuine weaknesses three separate times in this repo. Concretely:
   (`SpinBarrier`, no back-off) and one thread per core, between 2 and 8. The development machine has
   enough cores to hide this, so it could not be reproduced here; `DOTNET_PROCESSOR_COUNT=2` or `=4` sets
   the thread count, but not the cores, and is the closest stand-in.
+- That fix moved the failure rather than ending it: the next run passed Ubuntu and failed Windows,
+  where the exchange test, now four threads, let the cell through instead. Beside the rest of the suite
+  on four cores, some property escapes whatever the thread count. `ThreadSafetySuiteTests` now runs in
+  the `RunsAlone` collection, after every parallel test, with the cores to itself. Raising `Attempts`
+  was the alternative and was rejected: it makes the build greener without making the suite see more.
 - A codegen assertion that only looks for something's *absence* passes just as happily pointed at
   nothing. Test 2 stayed green with the specialisation removed, because the loop's CAS inlines and
   leaves no call symbol. Read mnemonics, and pair every assertion with a case that must show the
