@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using AwesomeAssertions;
 using NickStrupat;
 
@@ -107,7 +108,6 @@ public abstract class ThreadSafetyTests
 		var atomic = Create(0L);
 		var takenOut = new UInt64[Threads];
 		var exchanges = 0;
-		using var stop = new CancellationTokenSource(Window);
 
 		RunOnDedicatedThreads((thread, barrier) =>
 		{
@@ -116,7 +116,7 @@ public abstract class ThreadSafetyTests
 			// busy with the rest of the suite they drifted apart and stopped overlapping.
 			var hash = 0UL;
 			var i = 0;
-			for (; i % SyncEvery != 0 || barrier.SignalAndWaitUnless(stop.Token); i++)
+			for (; i % SyncEvery != 0 || barrier.SignalAndWaitWithin(Window); i++)
 				hash += Mix(atomic.Exchange(Token(thread, i)));
 			takenOut[thread] = hash;
 			exchanges = i;
@@ -146,12 +146,11 @@ public abstract class ThreadSafetyTests
 		var atomic = Create(0L);
 		var winners = new Int32[MaxRounds];
 		var rounds = 0;
-		using var stop = new CancellationTokenSource(Window);
 
 		RunOnDedicatedThreads((_, barrier) =>
 		{
 			var round = 0;
-			for (; round < MaxRounds && barrier.SignalAndWaitUnless(stop.Token); round++)
+			for (; round < MaxRounds && barrier.SignalAndWaitWithin(Window); round++)
 				if (atomic.TryCompareExchange(round + 1L, round, out Int64 _))
 					Interlocked.Increment(ref winners[round]);
 			rounds = round;
@@ -172,12 +171,11 @@ public abstract class ThreadSafetyTests
 		var atomic = Create(new Tolerance(0, 0));
 		var winners = new Int32[MaxRounds];
 		var rounds = 0;
-		using var stop = new CancellationTokenSource(Window);
 
 		RunOnDedicatedThreads((_, barrier) =>
 		{
 			var round = 0;
-			for (; round < MaxRounds && barrier.SignalAndWaitUnless(stop.Token); round++)
+			for (; round < MaxRounds && barrier.SignalAndWaitWithin(Window); round++)
 			{
 				var comparand = new Tolerance(round, Int32.MaxValue);
 				if (atomic.TryCompareExchange(new Tolerance(round + 1, round + 1), comparand, out Tolerance _))
@@ -449,26 +447,48 @@ public abstract class ThreadSafetyTests
 		private Int32 round;
 		private Boolean goOn = true;
 
+		/// <summary>
+		/// When the first timed round was released, as a <see cref="Stopwatch"/> timestamp, or zero before
+		/// then. Only the thread releasing a round touches it, and rounds are released one at a time.
+		/// </summary>
+		private Int64 started;
+
 		/// <summary>Arrives at the barrier and spins until every participant has arrived.</summary>
-		public void SignalAndWait() => SignalAndWaitUnless(CancellationToken.None);
+		public void SignalAndWait() => SignalAndWaitWithin(Timeout.InfiniteTimeSpan);
 
 		/// <summary>
-		/// Arrives at the barrier, spins until every participant has arrived, and reports whether to carry
-		/// on.
+		/// Arrives at the barrier, spins until every participant has arrived, and reports whether there is
+		/// time for another round.
 		/// </summary>
-		/// <param name="stop">Once cancelled, the next round tells every participant to stop.</param>
-		/// <returns><see langword="false"/> once <paramref name="stop"/> has been cancelled.</returns>
+		/// <param name="window">
+		/// How long rounds continue, counted from the first round released with a limit, or
+		/// <see cref="Timeout.InfiniteTimeSpan"/> for no limit.
+		/// </param>
+		/// <returns><see langword="false"/> once <paramref name="window"/> has passed.</returns>
 		/// <remarks>
+		/// <para>
+		/// The clock starts at the first release, when every participant is already running. A clock
+		/// started by the test, before its threads were created, ran out before the first round on a busy
+		/// Windows runner, and the test raced nothing.
+		/// </para>
+		/// <para>
 		/// The last thread to arrive decides for all of them and publishes the answer with the release, so
-		/// every participant gets the same answer in the same round. Each checking the token itself could
+		/// every participant gets the same answer in the same round. Each checking the time itself could
 		/// split them, and the ones carrying on would wait forever at a barrier the others had left.
+		/// </para>
 		/// </remarks>
-		public Boolean SignalAndWaitUnless(CancellationToken stop)
+		public Boolean SignalAndWaitWithin(TimeSpan window)
 		{
 			var current = Volatile.Read(ref round);
 			if (Interlocked.Increment(ref arrived) == participants)
 			{
-				var decision = !stop.IsCancellationRequested;
+				var decision = true;
+				if (window != Timeout.InfiniteTimeSpan)
+				{
+					if (started == 0)
+						started = Stopwatch.GetTimestamp();
+					decision = Stopwatch.GetElapsedTime(started) < window;
+				}
 				Volatile.Write(ref goOn, decision);
 
 				// Reset before releasing: a released thread may arrive for the next round at once.

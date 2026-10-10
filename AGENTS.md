@@ -233,6 +233,14 @@ caught genuine weaknesses three separate times in this repo. Concretely:
   than every token, and every thread stops in the same round because the barrier's last arrival decides.
   Trap hit on the way: `AllSatisfy(c => c.Should().Be(1))` over a million rounds, failing against
   `NaiveAtomic`, ran for minutes building its message. Count the bad rounds and assert the count.
+- The window then ran out before the first round on a busy Windows runner, because the test started its
+  clock before creating its threads; the `rounds > 0` check is what turned that into a failure rather
+  than a vacuous pass. `SpinBarrier.SignalAndWaitWithin` now starts the clock at the first timed release.
+  Falsified with a 400 ms sleep before the threads start: three failures at `HEAD`, none with the fix.
+- `BoxAtomic_WhenAnExchangeRetries_BuildsOneBoxPerCallRatherThanOnePerAttempt` failed twice in six CI
+  attempts, 16 and 48 bytes over a band both of whose ends are 5,120,000 at 64 bits — not a multiple of
+  the box, so not the cell. It now allows `StrayBytes` (4 KiB) over. Falsified by restoring a box per
+  attempt: 23 to 27 MB, against a ceiling of 5,124,096.
 - A codegen assertion that only looks for something's *absence* passes just as happily pointed at
   nothing. Test 2 stayed green with the specialisation removed, because the loop's CAS inlines and
   leaves no call symbol. Read mnemonics, and pair every assertion with a case that must show the
