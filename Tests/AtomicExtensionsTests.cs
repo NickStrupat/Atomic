@@ -175,17 +175,16 @@ public class AtomicExtensionsTests
 	public void BitwiseOperations_WhenTheValueIsAnEnum_AllocateNothing()
 	{
 		var cell = new Atomic<Access>(Access.None);
-		cell.Or(Access.Read);
 
-		var before = GC.GetAllocatedBytesForCurrentThread();
-		for (var i = 0; i < 1_000; i++)
+		Allocation.Least([MethodImpl(MethodImplOptions.AggressiveOptimization)] () =>
 		{
-			cell.Or(Access.Write);
-			cell.And(Access.Read);
-			cell.Xor(Access.Execute);
-		}
-
-		(GC.GetAllocatedBytesForCurrentThread() - before).Should().Be(0);
+			for (var i = 0; i < 1_000; i++)
+			{
+				cell.Or(Access.Write);
+				cell.And(Access.Read);
+				cell.Xor(Access.Execute);
+			}
+		}).Should().Be(0);
 	}
 
 	/// <summary>

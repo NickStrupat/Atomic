@@ -237,10 +237,16 @@ caught genuine weaknesses three separate times in this repo. Concretely:
   clock before creating its threads; the `rounds > 0` check is what turned that into a failure rather
   than a vacuous pass. `SpinBarrier.SignalAndWaitWithin` now starts the clock at the first timed release.
   Falsified with a 400 ms sleep before the threads start: three failures at `HEAD`, none with the fix.
-- `BoxAtomic_WhenAnExchangeRetries_BuildsOneBoxPerCallRatherThanOnePerAttempt` failed twice in six CI
-  attempts, 16 and 48 bytes over a band both of whose ends are 5,120,000 at 64 bits — not a multiple of
-  the box, so not the cell. It now allows `StrayBytes` (4 KiB) over. Falsified by restoring a box per
-  attempt: 23 to 27 MB, against a ceiling of 5,124,096.
+- Exact allocation assertions failed on CI three times in eleven attempts, in three tests: 16 and 48
+  bytes over the eight-thread box band (both of whose ends are 5,120,000 at 64 bits), then 7,592 bytes
+  on a compare-exchange hit that allocates nothing. None is what a per-call allocation would add up to;
+  the likeliest source is the runtime working on the measured thread. A 4 KiB allowance on the first
+  test was tried and replaced. Every exact allocation check now goes through `Allocation.Least`: warm
+  up, measure three times, keep the least, with the measured loop `AggressiveOptimization`. One-off work
+  lands in one repetition at most; a per-call allocation lands in all of them. Falsified with a box per
+  attempt (20.8 MB against 5,120,000 exactly) and an allocation added to `Write`, the lock-path
+  compare-exchange, `Increment` and the enum `Or` — each failed by exactly calls × 24 bytes. Any new
+  allocation check should use it; `MeasureOneBox` is the exception, since it records a range on purpose.
 - A codegen assertion that only looks for something's *absence* passes just as happily pointed at
   nothing. Test 2 stayed green with the specialisation removed, because the loop's CAS inlines and
   leaves no call symbol. Read mnemonics, and pair every assertion with a case that must show the

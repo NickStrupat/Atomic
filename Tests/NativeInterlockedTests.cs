@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using AwesomeAssertions;
 using NickStrupat;
 
@@ -191,19 +192,16 @@ public class NativeInterlockedTests
 		// quietly allocate on every call, which is what this watches for.
 		var counter = new Atomic<Int64>(0);
 		var flags = new Atomic<Int32>(0);
-		Generic.Increment(counter);
-		Generic.Add(flags, 1);
-		Generic.Subtract(flags, 1);
 
-		var before = GC.GetAllocatedBytesForCurrentThread();
-		for (var i = 0; i < 1_000; i++)
+		Allocation.Least([MethodImpl(MethodImplOptions.AggressiveOptimization)] () =>
 		{
-			Generic.Increment(counter);
-			Generic.Add(flags, 1);
-			Generic.Subtract(flags, 1);
-		}
-
-		(GC.GetAllocatedBytesForCurrentThread() - before).Should().Be(0);
+			for (var i = 0; i < 1_000; i++)
+			{
+				Generic.Increment(counter);
+				Generic.Add(flags, 1);
+				Generic.Subtract(flags, 1);
+			}
+		}).Should().Be(0);
 	}
 
 	[Fact]

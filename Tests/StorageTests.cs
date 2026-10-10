@@ -34,18 +34,6 @@ public class StorageTests
 	/// </remarks>
 	private static readonly (Int64 Least, Int64 Most) OneBox = MeasureOneBox();
 
-	/// <summary>
-	/// What the runtime may allocate on a measured thread for reasons of its own, over a whole run.
-	/// </summary>
-	/// <remarks>
-	/// The eight-thread box test failed on CI twice in six attempts, 16 and 48 bytes over a band whose two
-	/// ends are both exactly 5,120,000 at 64 bits. Neither is a multiple of the 32-byte box, so neither is
-	/// the cell building a box; the likeliest source is the runtime working on the measured thread, such
-	/// as recompiling the hot loop in place. This margin cannot hide the regression the test is for: a box
-	/// per attempt measured 155 bytes per call against 32, millions of bytes over in a run of this size.
-	/// </remarks>
-	private const Int64 StrayBytes = 4096;
-
 	[Fact]
 	public void Atomic_TakesALockOnlyForValuesItCannotSwapInPlace()
 	{
@@ -307,12 +295,13 @@ public class StorageTests
 
 		var threads = Enumerable.Range(0, Threads).Select(_ => new Thread(() =>
 		{
-			cell.CompareExchange(7m, 7m); // warm up before measuring
 			start.SignalAndWait();
-			var before = GC.GetAllocatedBytesForCurrentThread();
-			for (var i = 0; i < PerThread; i++)
-				cell.CompareExchange(7m, 7m);
-			Interlocked.Add(ref bytes, GC.GetAllocatedBytesForCurrentThread() - before);
+			var least = Allocation.Least([MethodImpl(MethodImplOptions.AggressiveOptimization)] () =>
+			{
+				for (var i = 0; i < PerThread; i++)
+					cell.CompareExchange(7m, 7m);
+			});
+			Interlocked.Add(ref bytes, least);
 		}) { IsBackground = true }).ToArray();
 
 		foreach (var thread in threads)
@@ -322,7 +311,7 @@ public class StorageTests
 
 		bytes.Should().BeInRange(
 			Threads * (Int64)PerThread * OneBox.Least,
-			Threads * (Int64)PerThread * OneBox.Most + StrayBytes);
+			Threads * (Int64)PerThread * OneBox.Most);
 	}
 
 	/// <summary>Checks whether a cell's field actually starts on the given boundary.</summary>
@@ -376,14 +365,12 @@ public class StorageTests
 		return (least, most);
 	}
 
-	private static Int64 MeasureWrites<T>(IAtomic<T> atomic, T value)
-	{
-		atomic.Write(value); // warm up before measuring
-		var before = GC.GetAllocatedBytesForCurrentThread();
-		for (var i = 0; i < Iterations; i++)
-			atomic.Write(value);
-		return GC.GetAllocatedBytesForCurrentThread() - before;
-	}
+	private static Int64 MeasureWrites<T>(IAtomic<T> atomic, T value) =>
+		Allocation.Least([MethodImpl(MethodImplOptions.AggressiveOptimization)] () =>
+		{
+			for (var i = 0; i < Iterations; i++)
+				atomic.Write(value);
+		});
 
 	[Fact]
 	public void CompareExchange_WhenTypeHasNoEquatable_AllocatesOnlyOnAMiss()
@@ -406,12 +393,10 @@ public class StorageTests
 			.Should().BeGreaterThan(0, "bits differ, so the type has to be asked, and asking boxes");
 	}
 
-	private static Int64 MeasureCompareExchange<T>(Atomic<T> atomic, T value, T comparand)
-	{
-		atomic.CompareExchange(value, comparand); // warm up before measuring
-		var before = GC.GetAllocatedBytesForCurrentThread();
-		for (var i = 0; i < Iterations; i++)
-			atomic.CompareExchange(value, comparand);
-		return GC.GetAllocatedBytesForCurrentThread() - before;
-	}
+	private static Int64 MeasureCompareExchange<T>(Atomic<T> atomic, T value, T comparand) =>
+		Allocation.Least([MethodImpl(MethodImplOptions.AggressiveOptimization)] () =>
+		{
+			for (var i = 0; i < Iterations; i++)
+				atomic.CompareExchange(value, comparand);
+		});
 }
