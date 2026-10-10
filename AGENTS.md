@@ -225,6 +225,14 @@ caught genuine weaknesses three separate times in this repo. Concretely:
   on four cores, some property escapes whatever the thread count. `ThreadSafetySuiteTests` now runs in
   the `RunsAlone` collection, after every parallel test, with the cores to itself. Raising `Attempts`
   was the alternative and was rejected: it makes the build greener without making the suite see more.
+- Isolation was not enough either: macOS then let the exchange test through, the whole check having
+  taken 110 ms. A burst under a millisecond on a 3- or 4-vCPU CI machine can run its threads one after
+  another whatever the guest does, because the host need not run the vCPUs at once. The exchange and
+  one-winner tests now run for `Window` (250 ms) rather than a fixed count, as the tearing test, which
+  never failed on CI, always did. The exchange test keeps a SplitMix64 multiset hash of each side rather
+  than every token, and every thread stops in the same round because the barrier's last arrival decides.
+  Trap hit on the way: `AllSatisfy(c => c.Should().Be(1))` over a million rounds, failing against
+  `NaiveAtomic`, ran for minutes building its message. Count the bad rounds and assert the count.
 - A codegen assertion that only looks for something's *absence* passes just as happily pointed at
   nothing. Test 2 stayed green with the specialisation removed, because the loop's CAS inlines and
   leaves no call symbol. Read mnemonics, and pair every assertion with a case that must show the

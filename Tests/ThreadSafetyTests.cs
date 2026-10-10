@@ -44,8 +44,14 @@ public abstract class ThreadSafetyTests
 	private const Int32 IncrementsPerThread = 10_000;
 	private static readonly Int64 Total = Threads * (Int64)IncrementsPerThread;
 
-	/// <summary>How long each test that races a writer against a reader runs.</summary>
+	/// <summary>How long each test that races threads against one another runs.</summary>
 	private static readonly TimeSpan Window = TimeSpan.FromMilliseconds(250);
+
+	/// <summary>
+	/// A ceiling on the rounds a one-winner test races, so its per-round tally has a fixed size. A round
+	/// costs a barrier, so <see cref="Window"/> ends a run long before this does on any machine seen so far.
+	/// </summary>
+	private const Int32 MaxRounds = 1_000_000;
 
 	/// <summary>Creates a cell of the implementation under test.</summary>
 	/// <typeparam name="T">The type of the value held by the cell.</typeparam>
@@ -92,35 +98,41 @@ public abstract class ThreadSafetyTests
 		// started holding. A swap that dropped a write would leave a token unaccounted for; one that
 		// returned a value another thread had already been handed would produce a duplicate. Counting
 		// updates, as the tests above do, would notice neither.
-		const Int32 PerThread = 5_000;
+		//
+		// The run lasts a fixed time rather than a fixed count, so it spans many scheduler time slices:
+		// on a CI virtual machine with three or four cores, a burst under a millisecond can run its threads
+		// one after another. That leaves too many tokens to keep, so each side is summarised as a multiset
+		// hash, which two different multisets match only by a 64-bit coincidence.
 		const Int32 SyncEvery = 250;
 		var atomic = Create(0L);
-		var displaced = new Int64[Threads][];
+		var takenOut = new UInt64[Threads];
+		var exchanges = 0;
+		using var stop = new CancellationTokenSource(Window);
 
 		RunOnDedicatedThreads((thread, barrier) =>
 		{
-			var taken = new Int64[PerThread];
-			for (var i = 0; i < PerThread; i++)
-			{
-				// Every thread reaches this the same number of times, so the barrier stays balanced. It is
-				// here because releasing the threads once was not enough: on a machine busy with the rest
-				// of the suite they drifted apart, stopped overlapping, and this test went from catching a
-				// plainly broken cell every time to catching it three runs in four.
-				if (i % SyncEvery == 0)
-					barrier.SignalAndWait();
-				taken[i] = atomic.Exchange(Token(thread, i));
-			}
-			displaced[thread] = taken;
+			// Every thread stops at the same sync point, so each makes the same number of exchanges. The
+			// periodic re-sync is here because releasing the threads once was not enough: on a machine
+			// busy with the rest of the suite they drifted apart and stopped overlapping.
+			var hash = 0UL;
+			var i = 0;
+			for (; i % SyncEvery != 0 || barrier.SignalAndWaitUnless(stop.Token); i++)
+				hash += Mix(atomic.Exchange(Token(thread, i)));
+			takenOut[thread] = hash;
+			exchanges = i;
 		});
 
-		var observed = displaced.SelectMany(taken => taken).Append(atomic.Read()).Order().ToArray();
-		var written = Enumerable.Range(0, Threads)
-			.SelectMany(thread => Enumerable.Range(0, PerThread).Select(i => Token(thread, i)))
-			.Append(0L)
-			.Order()
-			.ToArray();
+		var observed = Mix(atomic.Read());
+		foreach (var hash in takenOut)
+			observed += hash;
 
-		observed.Should().Equal(written);
+		var written = Mix(0L);
+		for (var thread = 0; thread < Threads; thread++)
+			for (var i = 0; i < exchanges; i++)
+				written += Mix(Token(thread, i));
+
+		exchanges.Should().BeGreaterThan(0, "a run that made no exchanges proves nothing");
+		observed.Should().Be(written, "the tokens taken out, plus the one left in, must be the tokens put in");
 	}
 
 	[Fact]
@@ -129,23 +141,25 @@ public abstract class ThreadSafetyTests
 		// Started in sequence, threads would mostly find the comparand already gone and fail without ever
 		// having collided, which proves nothing. The barrier releases them into the same round together,
 		// and no thread can run ahead: reaching the next round means signalling it, and signalling blocks
-		// until the stragglers have finished the round before.
-		const Int32 Rounds = 500;
+		// until the stragglers have finished the round before. Rounds continue for a fixed time, for the
+		// reason the exchange test above gives.
 		var atomic = Create(0L);
-		var winners = new Int32[Rounds];
+		var winners = new Int32[MaxRounds];
+		var rounds = 0;
+		using var stop = new CancellationTokenSource(Window);
 
 		RunOnDedicatedThreads((_, barrier) =>
 		{
-			for (var round = 0; round < Rounds; round++)
-			{
-				barrier.SignalAndWait();
+			var round = 0;
+			for (; round < MaxRounds && barrier.SignalAndWaitUnless(stop.Token); round++)
 				if (atomic.TryCompareExchange(round + 1L, round, out Int64 _))
 					Interlocked.Increment(ref winners[round]);
-			}
+			rounds = round;
 		});
 
-		winners.Should().AllSatisfy(count => count.Should().Be(1));
-		atomic.Read().Should().Be(Rounds);
+		rounds.Should().BeGreaterThan(0, "a run that raced no rounds proves nothing");
+		RoundsWithoutExactlyOneWinner(winners, rounds).Should().Be(0, $"each of {rounds} rounds must have exactly one winner");
+		atomic.Read().Should().Be(rounds);
 	}
 
 	[Fact]
@@ -155,23 +169,26 @@ public abstract class ThreadSafetyTests
 		// none of them is its bit pattern. That puts every thread past the single instruction and
 		// into the retry that follows it, every round, which is the point: a thread that loses the race
 		// there has to go round on what it saw rather than report an inequality that never happened.
-		const Int32 Rounds = 500;
 		var atomic = Create(new Tolerance(0, 0));
-		var winners = new Int32[Rounds];
+		var winners = new Int32[MaxRounds];
+		var rounds = 0;
+		using var stop = new CancellationTokenSource(Window);
 
 		RunOnDedicatedThreads((_, barrier) =>
 		{
-			for (var round = 0; round < Rounds; round++)
+			var round = 0;
+			for (; round < MaxRounds && barrier.SignalAndWaitUnless(stop.Token); round++)
 			{
-				barrier.SignalAndWait();
 				var comparand = new Tolerance(round, Int32.MaxValue);
 				if (atomic.TryCompareExchange(new Tolerance(round + 1, round + 1), comparand, out Tolerance _))
 					Interlocked.Increment(ref winners[round]);
 			}
+			rounds = round;
 		});
 
-		winners.Should().AllSatisfy(count => count.Should().Be(1));
-		atomic.Read().Value.Should().Be(Rounds);
+		rounds.Should().BeGreaterThan(0, "a run that raced no rounds proves nothing");
+		RoundsWithoutExactlyOneWinner(winners, rounds).Should().Be(0, $"each of {rounds} rounds must have exactly one winner");
+		atomic.Read().Value.Should().Be(rounds);
 	}
 
 	[Fact]
@@ -311,6 +328,38 @@ public abstract class ThreadSafetyTests
 	/// <returns>A token different from every other token and from a cell's initial value of zero.</returns>
 	private static Int64 Token(Int32 thread, Int32 index) => ((Int64)(thread + 1) << 32) | (UInt32)index;
 
+	/// <summary>Counts the rounds that did not have exactly one winner.</summary>
+	/// <param name="winners">The number of winners in each round.</param>
+	/// <param name="rounds">How many rounds were raced.</param>
+	/// <returns>The number of rounds with no winner or with more than one.</returns>
+	/// <remarks>
+	/// A count rather than an assertion per round: a run can race up to <see cref="MaxRounds"/> rounds, and
+	/// asserting each one, and describing every failure, took minutes.
+	/// </remarks>
+	private static Int32 RoundsWithoutExactlyOneWinner(Int32[] winners, Int32 rounds)
+	{
+		var wrong = 0;
+		for (var round = 0; round < rounds; round++)
+			if (winners[round] != 1)
+				wrong++;
+		return wrong;
+	}
+
+	/// <summary>Scrambles a value, so that summing the results hashes a multiset of values.</summary>
+	/// <param name="value">The value to scramble.</param>
+	/// <returns>The SplitMix64 finaliser applied to it.</returns>
+	/// <remarks>
+	/// Addition is order-independent, so the sum of these over a collection depends only on which values
+	/// it holds and how many times each. Without the scrambling, a duplicate and a loss could cancel out.
+	/// </remarks>
+	private static UInt64 Mix(Int64 value)
+	{
+		var z = unchecked((UInt64)value + 0x9E3779B97F4A7C15UL);
+		z = unchecked((z ^ (z >> 30)) * 0xBF58476D1CE4E5B9UL);
+		z = unchecked((z ^ (z >> 27)) * 0x94D049BB133111EBUL);
+		return z ^ (z >> 31);
+	}
+
 	/// <summary>Applies <paramref name="next"/> to the cell <see cref="IncrementsPerThread"/> times.</summary>
 	/// <typeparam name="T">The type of the value held by the cell.</typeparam>
 	/// <param name="atomic">The cell to update.</param>
@@ -398,17 +447,34 @@ public abstract class ThreadSafetyTests
 
 		private Int32 arrived;
 		private Int32 round;
+		private Boolean goOn = true;
 
 		/// <summary>Arrives at the barrier and spins until every participant has arrived.</summary>
-		public void SignalAndWait()
+		public void SignalAndWait() => SignalAndWaitUnless(CancellationToken.None);
+
+		/// <summary>
+		/// Arrives at the barrier, spins until every participant has arrived, and reports whether to carry
+		/// on.
+		/// </summary>
+		/// <param name="stop">Once cancelled, the next round tells every participant to stop.</param>
+		/// <returns><see langword="false"/> once <paramref name="stop"/> has been cancelled.</returns>
+		/// <remarks>
+		/// The last thread to arrive decides for all of them and publishes the answer with the release, so
+		/// every participant gets the same answer in the same round. Each checking the token itself could
+		/// split them, and the ones carrying on would wait forever at a barrier the others had left.
+		/// </remarks>
+		public Boolean SignalAndWaitUnless(CancellationToken stop)
 		{
 			var current = Volatile.Read(ref round);
 			if (Interlocked.Increment(ref arrived) == participants)
 			{
+				var decision = !stop.IsCancellationRequested;
+				Volatile.Write(ref goOn, decision);
+
 				// Reset before releasing: a released thread may arrive for the next round at once.
 				Volatile.Write(ref arrived, 0);
 				Interlocked.Increment(ref round);
-				return;
+				return decision;
 			}
 
 			for (var spins = 1; Volatile.Read(ref round) == current; spins++)
@@ -418,6 +484,9 @@ public abstract class ThreadSafetyTests
 				else
 					Thread.SpinWait(1);
 			}
+
+			// Safe to read after the release: the next round cannot be decided until this thread arrives.
+			return Volatile.Read(ref goOn);
 		}
 	}
 }

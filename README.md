@@ -477,8 +477,8 @@ threads at once, and a failure there is a race that may not:
 | | |
 |---|---|
 | No lost updates | One thread per core (2 to 8) incrementing through compare-exchange arrive at the full count, for a word, a wide value and a value holding a reference. |
-| Exchange conserves | Every thread swaps in tokens nobody else has and keeps what it displaced. The tokens taken out, plus the one left in the cell, are exactly the tokens put in. A swap that dropped a write or handed one value to two threads shows up here and nowhere else. |
-| One winner | Threads released together from a barrier compare-exchange against the same comparand, five hundred times. Exactly one wins each round. |
+| Exchange conserves | For 250 ms, every thread swaps in tokens nobody else has and keeps a hash of what it displaced. The tokens taken out, plus the one left in the cell, are exactly the tokens put in, compared as multisets. A swap that dropped a write or handed one value to two threads shows up here and nowhere else. |
+| One winner | Threads released together from a barrier compare-exchange against the same comparand, round after round for 250 ms. Exactly one wins each round. |
 | Publication | A reader that sees a sequence number published through a second cell sees the payload written before it — the acquire/release guarantee, which needs two cells to be a question at all. |
 | No tearing | A writer stores values whose parts agree; a reader that sees parts disagreeing has caught a write half done. Across eight shapes that between them cover every strategy. |
 
