@@ -1,5 +1,8 @@
 # Atomic
 
+[![CI](https://github.com/NickStrupat/Atomic/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/NickStrupat/Atomic/actions/workflows/ci.yml)
+[![NuGet](https://img.shields.io/nuget/v/NickStrupat.Atomic.svg)](https://www.nuget.org/packages/NickStrupat.Atomic)
+
 A generic atomic cell for .NET. `Read`, `Write` and `Exchange` allocate nothing, for any `T`. Lock-free
 for references and any unmanaged value up to a word — including the 3-, 5-, 6- and 7-byte structs that no
 interlocked instruction matches — and for `Int64` and `UInt64` on 32-bit runtimes too. Everything else
