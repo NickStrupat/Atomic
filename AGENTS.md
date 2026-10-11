@@ -237,6 +237,11 @@ caught genuine weaknesses three separate times in this repo. Concretely:
   clock before creating its threads; the `rounds > 0` check is what turned that into a failure rather
   than a vacuous pass. `SpinBarrier.SignalAndWaitWithin` now starts the clock at the first timed release.
   Falsified with a 400 ms sleep before the threads start: three failures at `HEAD`, none with the fix.
+  `RunConcurrently` had the same flaw and failed the publication test's own `checks > 0` on Windows; it
+  now starts the clock after a start barrier, falsified the same way (two failures before, none after).
+- The lost-updates tests were the last race property on a fixed count, and macOS let `NaiveAtomic`
+  through them five attempts running. They now increment for `Window` too, and the cell must have
+  counted every increment the threads made. Every race property `MustCatch` uses is now timed.
 - Exact allocation assertions failed on CI three times in eleven attempts, in three tests: 16 and 48
   bytes over the eight-thread box band (both of whose ends are 5,120,000 at 64 bits), then 7,592 bytes
   on a compare-exchange hit that allocates nothing. None is what a per-call allocation would add up to;

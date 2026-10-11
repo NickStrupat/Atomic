@@ -42,8 +42,8 @@ public abstract class ThreadSafetyTests
 	/// </remarks>
 	private static readonly Int32 Threads = Math.Clamp(Environment.ProcessorCount, 2, 8);
 
-	private const Int32 IncrementsPerThread = 10_000;
-	private static readonly Int64 Total = Threads * (Int64)IncrementsPerThread;
+	/// <summary>How many operations a thread makes between re-synchronising with the others.</summary>
+	private const Int32 SyncEvery = 250;
 
 	/// <summary>How long each test that races threads against one another runs.</summary>
 	private static readonly TimeSpan Window = TimeSpan.FromMilliseconds(250);
@@ -65,9 +65,9 @@ public abstract class ThreadSafetyTests
 	{
 		var atomic = Create(0L);
 
-		RunOnDedicatedThreads((_, _) => Increment(atomic, current => current + 1));
+		var total = IncrementForAWindow(atomic, current => current + 1);
 
-		atomic.Read().Should().Be(Total);
+		atomic.Read().Should().Be(total);
 	}
 
 	[Fact]
@@ -75,9 +75,9 @@ public abstract class ThreadSafetyTests
 	{
 		var atomic = Create(0m);
 
-		RunOnDedicatedThreads((_, _) => Increment(atomic, current => current + 1));
+		var total = IncrementForAWindow(atomic, current => current + 1);
 
-		atomic.Read().Should().Be(Total);
+		atomic.Read().Should().Be(total);
 	}
 
 	[Fact]
@@ -85,9 +85,9 @@ public abstract class ThreadSafetyTests
 	{
 		var atomic = Create((Count: 0L, Tag: "tag"));
 
-		RunOnDedicatedThreads((_, _) => Increment(atomic, current => (current.Count + 1, current.Tag)));
+		var total = IncrementForAWindow(atomic, current => (current.Count + 1, current.Tag));
 
-		atomic.Read().Should().Be((Total, "tag"));
+		atomic.Read().Should().Be((total, "tag"));
 	}
 
 	[Fact]
@@ -104,7 +104,6 @@ public abstract class ThreadSafetyTests
 		// on a CI virtual machine with three or four cores, a burst under a millisecond can run its threads
 		// one after another. That leaves too many tokens to keep, so each side is summarised as a multiset
 		// hash, which two different multisets match only by a 64-bit coincidence.
-		const Int32 SyncEvery = 250;
 		var atomic = Create(0L);
 		var takenOut = new UInt64[Threads];
 		var exchanges = 0;
@@ -201,22 +200,21 @@ public abstract class ThreadSafetyTests
 		// behind it. Nothing here is allowed to observe that.
 		var payload = Create(0L);
 		var published = Create(0L);
-		using var cancellation = new CancellationTokenSource(Window);
 		var stale = 0L;
 		var checks = 0L;
 
 		RunConcurrently(
-			() =>
+			stop =>
 			{
-				for (var i = 1L; !cancellation.IsCancellationRequested; i++)
+				for (var i = 1L; !stop.IsCancellationRequested; i++)
 				{
 					payload.Write(i);
 					published.Write(i);
 				}
 			},
-			() =>
+			stop =>
 			{
-				while (!cancellation.IsCancellationRequested)
+				while (!stop.IsCancellationRequested)
 				{
 					var seen = published.Read();
 					if (payload.Read() < seen)
@@ -254,14 +252,13 @@ public abstract class ThreadSafetyTests
 		var tagged = Create(new Tagged(0, texts[0]));
 		var reference = Create(texts[0]);
 
-		using var cancellation = new CancellationTokenSource(Window);
 		var torn = new ConcurrentQueue<String>();
 		var checks = 0L;
 
 		RunConcurrently(
-			() =>
+			stop =>
 			{
-				for (var i = 0; !cancellation.IsCancellationRequested; i++)
+				for (var i = 0; !stop.IsCancellationRequested; i++)
 				{
 					var b = (Byte)i;
 					var slot = i % Distinct;
@@ -275,10 +272,10 @@ public abstract class ThreadSafetyTests
 					reference.Write(texts[slot]);
 				}
 			},
-			() =>
+			stop =>
 			{
 				Span<Int32> bits = stackalloc Int32[4];
-				while (!cancellation.IsCancellationRequested)
+				while (!stop.IsCancellationRequested)
 				{
 					var n = integer.Read();
 					if ((Int32)(n >> 32) != (Int32)n)
@@ -358,25 +355,63 @@ public abstract class ThreadSafetyTests
 		return z ^ (z >> 31);
 	}
 
-	/// <summary>Applies <paramref name="next"/> to the cell <see cref="IncrementsPerThread"/> times.</summary>
+	/// <summary>
+	/// Has every thread apply <paramref name="next"/> to the cell through a compare-exchange loop for
+	/// <see cref="Window"/>, and counts how many times they applied it between them.
+	/// </summary>
 	/// <typeparam name="T">The type of the value held by the cell.</typeparam>
 	/// <param name="atomic">The cell to update.</param>
 	/// <param name="next">Produces the new value from the current one.</param>
-	private static void Increment<T>(IAtomic<T> atomic, Func<T, T> next)
+	/// <returns>How many updates were applied in total, which is what the cell must have counted.</returns>
+	/// <remarks>
+	/// For a fixed time rather than a fixed count, for the reason the exchange test gives: at a fixed
+	/// 10,000 each, the whole run took under a millisecond, and on a macOS CI runner the cell with no
+	/// synchronisation at all lost no updates five attempts running.
+	/// </remarks>
+	private static Int64 IncrementForAWindow<T>(IAtomic<T> atomic, Func<T, T> next)
 	{
-		for (var i = 0; i < IncrementsPerThread; i++)
-			while (true)
-			{
-				var current = atomic.Read();
-				if (EqualityComparer<T>.Default.Equals(atomic.CompareExchange(next(current), current), current))
-					break;
-			}
+		var updates = 0L;
+		RunOnDedicatedThreads((_, barrier) =>
+		{
+			// Every thread stops at the same sync point, so each applies the same number of updates.
+			var applied = 0;
+			for (; applied % SyncEvery != 0 || barrier.SignalAndWaitWithin(Window); applied++)
+				while (true)
+				{
+					var current = atomic.Read();
+					if (EqualityComparer<T>.Default.Equals(atomic.CompareExchange(next(current), current), current))
+						break;
+				}
+			Interlocked.Add(ref updates, applied);
+		});
+
+		updates.Should().BeGreaterThan(0, "a run that applied no updates proves nothing");
+		return updates;
 	}
 
-	/// <summary>Runs each of <paramref name="bodies"/> on its own thread and waits for them all.</summary>
-	/// <param name="bodies">The work to run, one body per thread.</param>
-	private static void RunConcurrently(params Action[] bodies) =>
-		Join(bodies.Select(body => new Thread(() => body()) { IsBackground = true }).ToArray());
+	/// <summary>
+	/// Runs each of <paramref name="bodies"/> on its own thread, released together, until
+	/// <see cref="Window"/> has passed, and waits for them all.
+	/// </summary>
+	/// <param name="bodies">The work to run, one body per thread, each given the token that ends the run.</param>
+	/// <remarks>
+	/// The clock starts once every thread is running. Started by the test, before its threads were
+	/// created, it ran out on a busy Windows runner before the publication test's reader had made a single
+	/// check.
+	/// </remarks>
+	private static void RunConcurrently(params Action<CancellationToken>[] bodies)
+	{
+		using var stop = new CancellationTokenSource();
+		var start = new SpinBarrier(bodies.Length);
+		var clockStarted = 0;
+		Join(bodies.Select(body => new Thread(() =>
+		{
+			start.SignalAndWait();
+			if (Interlocked.Exchange(ref clockStarted, 1) == 0)
+				stop.CancelAfter(Window);
+			body(stop.Token);
+		}) { IsBackground = true }).ToArray());
+	}
 
 	/// <summary>
 	/// Runs <paramref name="body"/> on <see cref="Threads"/> new threads, released together, and waits for
