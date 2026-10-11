@@ -14,6 +14,7 @@ settled, and the traps this repo has already fallen into.
 | `Atomic/` | The only project that ships. `Atomic<T>`, `AtomicExtensions`, `AtomicEnumExtensions`. |
 | `Atomic.Analyzers/` | `NSAT0001`/`NSAT0002`: `lock` and `Monitor` on a cell. Packed inside `Atomic`'s package, not on its own. |
 | `AnalyzerTests/` | The analyzer over snippets compiled against the real library, or against a stand-in declaring the same type. |
+| `CoyoteTests/` | Coyote explorations of every cell's interleavings. A console app, not a test project: `dotnet test` does not run it. |
 | `Candidates/` | `BoxAtomic<T>`, `SeqLockAtomic<T>`, `IAtomic<T>`, and struct adapters. Designs this one was chosen over; kept so the suite and the harness can drive all three. |
 | `Tests/` | Contract, thread safety, storage/layout, native instructions, codegen. |
 | `Benchmarks/` | BenchmarkDotNet per category, plus `contention` and `gc` modes. |
@@ -24,6 +25,7 @@ settled, and the traps this repo has already fallen into.
 ```
 dotnet test                       # Debug: codegen tests skip with a note
 dotnet test -c Release            # everything, including codegen
+dotnet run -c Release --project CoyoteTests   # interleavings, explored by Coyote
 dotnet run -c Release --project Benchmarks -- --filter "*"
 dotnet run -c Release --project Benchmarks -- contention
 dotnet run -c Release --project Benchmarks -- gc
@@ -175,6 +177,21 @@ to every project in the graph, restore included — `UndefineProperties` on the 
 restore — and `netstandard2.0` rejects them. The first symptom was not a failure: the two NativeAOT codegen
 tests turned into skips, because a publish that cannot run is reported as unavailable. Check the skip
 count, not just the failure count, after touching any project file.
+
+**Coyote rewrites only `CoyoteTests`' own copies.** The `CoyoteRewrite` target runs `dotnet coyote rewrite`
+over `Atomic.dll`, `Candidates.dll` and `CoyoteTests.dll` in that project's output after every build;
+rewriting twice is a no-op. The tool is pinned in `dotnet-tools.json` (1.7.11, the last release, March
+2024, targeting `net8.0`) with `rollForward` on, which was checked to rewrite `net10.0` assemblies on the
+.NET 10 runtime alone. Things this has already got wrong:
+
+- Memory-access race checking is what makes plain field accesses scheduling points. Without it the naive
+  cell passed all 1,000 schedules; the real cells still get scheduling points from `Interlocked`,
+  `Volatile` and locks, which is why a broken `Atomic<T>` was caught either way.
+- Every `Specification.Assert` overload takes a format string. A record's `ToString` interpolated into the
+  message threw `FormatException`, which Coyote reported as the bug — so the naive cell looked caught by
+  two properties that never ran. Values go in as arguments.
+- Coyote sends telemetry unless `WithTelemetryEnabled(false)`, and writes every iteration to the console
+  whatever the verbosity, so the runner swaps `Console.Out` for the duration of each exploration.
 
 ## Settled — do not re-open without new information
 

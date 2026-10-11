@@ -21,6 +21,7 @@ jobs:
       - run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
       - run: dotnet build -c Release -p:Version=$VERSION
       - run: dotnet test -c Release --no-build
+      - run: dotnet run --project CoyoteTests -c Release --no-build
       - run: dotnet pack Atomic -c Release --no-build -o artifacts -p:Version=$VERSION
       # The key lasts an hour, so request it only once the package is built.
       - uses: NuGet/login@v1

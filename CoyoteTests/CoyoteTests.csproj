@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net10.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <WarningsAsErrors>nullable</WarningsAsErrors>
+        <IsPackable>false</IsPackable>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Microsoft.Coyote" Version="1.7.11" />
+        <PackageReference Include="Microsoft.Coyote.Test" Version="1.7.11" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\Candidates\Candidates.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <!-- The same awkward types the thread-safety suite uses, so both explore the same values. -->
+        <Compile Include="..\Tests\TestTypes.cs" Link="TestTypes.cs" />
+        <None Include="rewrite.coyote.json" CopyToOutputDirectory="PreserveNewest" />
+    </ItemGroup>
+
+    <!--
+        Coyote takes control of the schedule by rewriting the assemblies under test, in this project's output
+        only: the copies of Atomic.dll and Candidates.dll everywhere else are untouched. Rewriting an
+        assembly twice is a no-op, so this can run after every build. The tool is pinned in
+        dotnet-tools.json at the repository root, with rollForward on, so it runs on .NET 10 where .NET 8
+        is not installed.
+    -->
+    <Target Name="CoyoteRewrite" AfterTargets="Build">
+        <Exec Command="dotnet tool restore" WorkingDirectory="$(MSBuildThisFileDirectory).." StandardOutputImportance="low" />
+        <Exec Command="dotnet coyote rewrite &quot;$(TargetDir)rewrite.coyote.json&quot;" WorkingDirectory="$(MSBuildThisFileDirectory).." StandardOutputImportance="low" />
+    </Target>
+
+</Project>

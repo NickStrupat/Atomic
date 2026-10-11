@@ -23,6 +23,9 @@ jobs:
       - run: dotnet build -c Release
       # Release: the codegen tests read optimised code, and skip on a Debug build.
       - run: dotnet test -c Release --no-build
+      # Coyote explores the cells' interleavings itself, so this result does not depend on the runner's
+      # cores. The build already rewrote its copies of the assemblies.
+      - run: dotnet run --project CoyoteTests -c Release --no-build
       - run: dotnet pack Atomic -c Release --no-build -o artifacts
         if: matrix.os == 'ubuntu-latest'
       - uses: actions/upload-artifact@v7

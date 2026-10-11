@@ -462,6 +462,7 @@ lock at compile time instead.
 | `Candidates/` | `BoxAtomic<T>` and `SeqLockAtomic<T>`, the designs this one was chosen over, plus the `IAtomic<T>` interface and the struct adapters that let one suite and one harness drive all three. |
 | `Tests/` | Correctness one thread at a time, thread safety under several, and the layout, allocation and strategy facts each implementation rests on. |
 | `AnalyzerTests/` | The analyzer, run over snippets compiled against the real library. |
+| `CoyoteTests/` | The cells' interleavings explored with Coyote: a console app, run with `dotnet run`. |
 | `Benchmarks/` | Per category: one operation at a time, throughput under contention, and what the allocations cost the rest of the process. |
 | `CodegenProbe/` | One call per cell operation, in methods that cannot be inlined away, for the disassembler to be pointed at. |
 
@@ -501,6 +502,25 @@ finished, and each property gets a few attempts and has to catch the broken cell
 every attempt in a row is a different claim from losing a coin toss, and it is the one that fails the
 build.
 
+### Coyote
+
+Whether a race on real threads is caught depends on the machine running two threads at the same moment,
+and a 3- or 4-core CI runner often does not. `CoyoteTests` takes that out of the machine's hands. It runs
+the same properties — exchange conserves, one winner, no lost updates, and the read-modify-writes — under
+[Coyote](https://microsoft.github.io/coyote/), which rewrites the assemblies after the build so that it
+chooses which task runs at every `Interlocked` call, `Volatile` call, lock and field access. Each property
+is explored over a thousand schedules, on every cell and on the values that reach each storage strategy.
+
+The real cells must survive every schedule; the unsynchronised cell must be caught, which it is within a
+few. The seed is fixed, so a given build explores the same schedules every time and a failure reproduces.
+Each property was also checked against a deliberately broken `Atomic<T>` — the equal-value retry made a
+plain read then write, the lock removed from the lock path, `Increment` made a read then write — and the
+matching exploration, and only that one, failed each time.
+
+It complements the thread-safety tests rather than replacing them. Coyote runs one task at a time with every
+operation taking effect in order, so a torn value or a reordered store cannot happen there; those are still
+the real-hardware tests' job.
+
 ### Codegen
 
 Every performance claim above rests on the strategy folding away, and nothing else in the suite would
@@ -537,6 +557,7 @@ a field nothing writes. It took a value read from the environment to stop both.
 ```
 dotnet test
 dotnet test -c Release
+dotnet run -c Release --project CoyoteTests
 dotnet run -c Release --project Benchmarks -- --filter "*"
 dotnet run -c Release --project Benchmarks -- contention
 dotnet run -c Release --project Benchmarks -- gc

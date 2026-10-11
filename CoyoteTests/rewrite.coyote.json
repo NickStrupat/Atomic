@@ -1,0 +1,4 @@
+{
+  "AssembliesPath": ".",
+  "Assemblies": [ "Atomic.dll", "Candidates.dll", "CoyoteTests.dll" ]
+}
